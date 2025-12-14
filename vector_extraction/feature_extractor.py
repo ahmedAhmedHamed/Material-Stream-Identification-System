@@ -12,6 +12,9 @@ Features:
 
 Author: (your name)
 """
+import os
+from pathlib import Path
+from typing import List
 
 import cv2
 import numpy as np
@@ -128,15 +131,20 @@ def extract_features(image):
 # Dataset-level extraction
 # -----------------------------
 
-def build_feature_matrix(image_paths, labels):
+def get_label_from_path(image_path):
+    return Path(image_path).parent.name
+
+
+def build_feature_matrix(image_paths: List[str], output_path: str = "../features.npz"):
     """
     image_paths: list of image file paths
-    labels: list or array of integer labels
+    output_path: path to save the .npz file containing X and y arrays
+    Returns: tuple of (X, y) arrays
     """
     X = []
     y = []
 
-    for path, label in zip(image_paths, labels):
+    for path in image_paths:
         image = cv2.imread(path)
         if image is None:
             raise IOError(f"Could not read image: {path}")
@@ -145,9 +153,14 @@ def build_feature_matrix(image_paths, labels):
         features = extract_features(image)
 
         X.append(features)
-        y.append(label)
+        y.append(get_label_from_path(path))
 
-    return np.array(X), np.array(y)
+    X = np.array(X)
+    y = np.array(y)
+    
+    np.savez(output_path, X=X, y=y)
+    
+    return X, y
 
 
 # -----------------------------
@@ -167,6 +180,10 @@ def scale_features(X_train, X_val=None):
 
     return X_train_scaled, scaler
 
+def get_image_paths(root):
+    exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+    return [str(p) for p in Path(root).rglob("*") if p.suffix.lower() in exts]
+
 
 # -----------------------------
 # Example usage
@@ -175,3 +192,5 @@ def scale_features(X_train, X_val=None):
 if __name__ == "__main__":
     print(f"Classical feature extractor ready.")
     print(f"Feature dimensionality: {TOTAL_FEATURE_DIM}")
+    image_paths = get_image_paths('../dataset')
+    X, Y = build_feature_matrix(image_paths)
