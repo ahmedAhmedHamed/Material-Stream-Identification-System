@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 from skimage.feature import local_binary_pattern
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
 from vector_extraction.augmentation import augment_image
 
@@ -206,17 +207,25 @@ def process_image_for_features(image_path: str) -> Tuple[np.ndarray, str]:
     return features, label
 
 
-def build_feature_matrix(image_paths: List[str], output_path: str = "../features.npz"):
+def build_feature_matrix(image_paths: List[str], 
+                         train_output_path: str = "../features_train.npz",
+                         val_output_path: str = "../features_val.npz",
+                         test_size: float = 0.3,
+                         random_state: int = 42):
     """
-    Build feature matrix with data augmentation.
+    Build feature matrix with data augmentation and split into train/validation.
     Doubles dataset size and balances all classes to equal size (2x largest class).
+    Splits data into 70% training and 30% validation sets.
     
     Args:
         image_paths: list of image file paths
-        output_path: path to save the .npz file containing X and y arrays
+        train_output_path: path to save training .npz file
+        val_output_path: path to save validation .npz file
+        test_size: proportion of data for validation (default: 0.3)
+        random_state: random seed for reproducibility (default: 42)
         
     Returns:
-        tuple of (X, y) arrays
+        tuple of (X_train, y_train, X_val, y_val) arrays
     """
     class_to_paths = analyze_class_distribution(image_paths)
     max_class_size = max(len(paths) for paths in class_to_paths.values())
@@ -244,9 +253,14 @@ def build_feature_matrix(image_paths: List[str], output_path: str = "../features
     X = np.array(X)
     y = np.array(y)
     
-    np.savez(output_path, X=X, y=y)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
     
-    return X, y
+    np.savez(train_output_path, X=X_train, y=y_train)
+    np.savez(val_output_path, X=X_val, y=y_val)
+    
+    return X_train, y_train, X_val, y_val
 
 
 # -----------------------------
@@ -279,4 +293,5 @@ if __name__ == "__main__":
     print(f"Classical feature extractor ready.")
     print(f"Feature dimensionality: {TOTAL_FEATURE_DIM}")
     image_paths = get_image_paths('../dataset')
-    X, Y = build_feature_matrix(image_paths)
+    X_train, y_train, X_val, y_val = build_feature_matrix(image_paths)
+    print(f"Training samples: {len(X_train)}, Validation samples: {len(X_val)}")
