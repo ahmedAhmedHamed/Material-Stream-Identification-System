@@ -14,12 +14,15 @@ Author: (your name)
 """
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Tuple
+import random
 
 import cv2
 import numpy as np
 from skimage.feature import local_binary_pattern
 from sklearn.preprocessing import StandardScaler
+
+from vector_extraction.augmentation import augment_image
 
 
 # -----------------------------
@@ -135,26 +138,109 @@ def get_label_from_path(image_path):
     return Path(image_path).parent.name
 
 
+def analyze_class_distribution(image_paths: List[str]) -> Dict[str, List[str]]:
+    """
+    Group image paths by their class label.
+    
+    Args:
+        image_paths: List of image file paths
+        
+    Returns:
+        Dictionary mapping class labels to lists of image paths
+    """
+    class_to_paths = {}
+    for path in image_paths:
+        label = get_label_from_path(path)
+        if label not in class_to_paths:
+            class_to_paths[label] = []
+        class_to_paths[label].append(path)
+    return class_to_paths
+
+
+def generate_augmented_samples(image_paths: List[str], needed_count: int) -> List[Tuple[np.ndarray, str]]:
+    """
+    Generate augmented image samples by randomly selecting from existing images
+    and applying random augmentations.
+    
+    Args:
+        image_paths: List of image file paths for a single class
+        needed_count: Number of augmented samples to generate
+        
+    Returns:
+        List of tuples (augmented_image, label) where image is RGB uint8
+    """
+    augmented_samples = []
+    label = get_label_from_path(image_paths[0])
+    
+    for _ in range(needed_count):
+        source_path = random.choice(image_paths)
+        image = cv2.imread(source_path)
+        if image is None:
+            raise IOError(f"Could not read image: {source_path}")
+        
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        augmented = augment_image(image, technique='random')
+        augmented_samples.append((augmented, label))
+    
+    return augmented_samples
+
+
+def process_image_for_features(image_path: str) -> Tuple[np.ndarray, str]:
+    """
+    Load image and extract features.
+    
+    Args:
+        image_path: Path to image file
+        
+    Returns:
+        Tuple of (feature_vector, label)
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        raise IOError(f"Could not read image: {image_path}")
+    
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    features = extract_features(image)
+    label = get_label_from_path(image_path)
+    
+    return features, label
+
+
 def build_feature_matrix(image_paths: List[str], output_path: str = "../features.npz"):
     """
-    image_paths: list of image file paths
-    output_path: path to save the .npz file containing X and y arrays
-    Returns: tuple of (X, y) arrays
+    Build feature matrix with data augmentation.
+    Doubles dataset size and balances all classes to equal size (2x largest class).
+    
+    Args:
+        image_paths: list of image file paths
+        output_path: path to save the .npz file containing X and y arrays
+        
+    Returns:
+        tuple of (X, y) arrays
     """
+    class_to_paths = analyze_class_distribution(image_paths)
+    max_class_size = max(len(paths) for paths in class_to_paths.values())
+    target_size = max_class_size * 2
+    
     X = []
     y = []
-
-    for path in image_paths:
-        image = cv2.imread(path)
-        if image is None:
-            raise IOError(f"Could not read image: {path}")
-
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        features = extract_features(image)
-
-        X.append(features)
-        y.append(get_label_from_path(path))
-
+    
+    for label, paths in class_to_paths.items():
+        current_count = len(paths)
+        needed_count = target_size - current_count
+        
+        for path in paths:
+            features, label_val = process_image_for_features(path)
+            X.append(features)
+            y.append(label_val)
+        
+        if needed_count > 0:
+            augmented_samples = generate_augmented_samples(paths, needed_count)
+            for aug_image, label_val in augmented_samples:
+                features = extract_features(aug_image)
+                X.append(features)
+                y.append(label_val)
+    
     X = np.array(X)
     y = np.array(y)
     
