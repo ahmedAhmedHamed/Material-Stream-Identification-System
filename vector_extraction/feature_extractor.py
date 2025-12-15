@@ -207,6 +207,64 @@ def process_image_for_features(image_path: str) -> Tuple[np.ndarray, str]:
     return features, label
 
 
+def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Process validation images without augmentation.
+    
+    Args:
+        class_to_val_paths: Dictionary mapping class labels to validation image paths
+        
+    Returns:
+        Tuple of (X_val, y_val) arrays
+    """
+    X_val = []
+    y_val = []
+    
+    for label, paths in class_to_val_paths.items():
+        for path in paths:
+            features, label_val = process_image_for_features(path)
+            X_val.append(features)
+            y_val.append(label_val)
+    
+    return np.array(X_val), np.array(y_val)
+
+
+def process_training_set(class_to_train_paths: Dict[str, List[str]]) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Process training images (original + augmented).
+    Balances all classes to equal size (2x largest class in training set).
+    
+    Args:
+        class_to_train_paths: Dictionary mapping class labels to training image paths
+        
+    Returns:
+        Tuple of (X_train, y_train) arrays
+    """
+    max_class_size = max(len(paths) for paths in class_to_train_paths.values())
+    target_size = max_class_size * 2
+    
+    X_train = []
+    y_train = []
+    
+    for label, paths in class_to_train_paths.items():
+        current_count = len(paths)
+        needed_count = target_size - current_count
+        
+        for path in paths:
+            features, label_val = process_image_for_features(path)
+            X_train.append(features)
+            y_train.append(label_val)
+        
+        if needed_count > 0:
+            augmented_samples = generate_augmented_samples(paths, needed_count)
+            for aug_image, label_val in augmented_samples:
+                features = extract_features(aug_image)
+                X_train.append(features)
+                y_train.append(label_val)
+    
+    return np.array(X_train), np.array(y_train)
+
+
 def build_feature_matrix(image_paths: List[str], 
                          train_output_path: str = "../features_train.npz",
                          val_output_path: str = "../features_val.npz",
@@ -214,48 +272,33 @@ def build_feature_matrix(image_paths: List[str],
                          random_state: int = 42):
     """
     Build feature matrix with data augmentation and split into train/validation.
-    Doubles dataset size and balances all classes to equal size (2x largest class).
-    Splits data into 70% training and 30% validation sets.
+    Validation dataset is 30% of original data (pre-augmentation) and is not augmented.
+    Training dataset is 70% of original data plus augmented samples to balance classes.
     
     Args:
         image_paths: list of image file paths
         train_output_path: path to save training .npz file
         val_output_path: path to save validation .npz file
-        test_size: proportion of data for validation (default: 0.3)
+        test_size: proportion of original data for validation (default: 0.3)
         random_state: random seed for reproducibility (default: 42)
         
     Returns:
         tuple of (X_train, y_train, X_val, y_val) arrays
     """
     class_to_paths = analyze_class_distribution(image_paths)
-    max_class_size = max(len(paths) for paths in class_to_paths.values())
-    target_size = max_class_size * 2
     
-    X = []
-    y = []
+    class_to_train_paths = {}
+    class_to_val_paths = {}
     
     for label, paths in class_to_paths.items():
-        current_count = len(paths)
-        needed_count = target_size - current_count
-        
-        for path in paths:
-            features, label_val = process_image_for_features(path)
-            X.append(features)
-            y.append(label_val)
-        
-        if needed_count > 0:
-            augmented_samples = generate_augmented_samples(paths, needed_count)
-            for aug_image, label_val in augmented_samples:
-                features = extract_features(aug_image)
-                X.append(features)
-                y.append(label_val)
+        train_paths, val_paths = train_test_split(
+            paths, test_size=test_size, random_state=random_state
+        )
+        class_to_train_paths[label] = train_paths
+        class_to_val_paths[label] = val_paths
     
-    X = np.array(X)
-    y = np.array(y)
-    
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
-    )
+    X_val, y_val = process_validation_set(class_to_val_paths)
+    X_train, y_train = process_training_set(class_to_train_paths)
     
     np.savez(train_output_path, X=X_train, y=y_train)
     np.savez(val_output_path, X=X_val, y=y_val)

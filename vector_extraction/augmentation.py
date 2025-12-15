@@ -131,3 +131,4 @@ def augment_image(image: np.ndarray, technique: str = 'random') -> np.ndarray:
         return add_noise(image)
     else:
         raise ValueError(f"Unknown technique: {technique}")
+
