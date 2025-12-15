@@ -10,7 +10,7 @@ Author: (your name)
 import os
 import json
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 from itertools import product
 
 import numpy as np
@@ -19,6 +19,14 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import joblib
 
 from vector_extraction.feature_extractor import scale_features
+from classifiers.parallel_training import train_models_parallel
+
+
+# -----------------------------
+# Configuration
+# -----------------------------
+
+MAX_WORKERS = os.cpu_count() or 4  # Number of threads for parallel training
 
 
 # -----------------------------
@@ -338,6 +346,91 @@ def save_classifier(classifier: SVC,
 
 
 # -----------------------------
+# Parallel Training
+# -----------------------------
+
+def generate_parameter_combinations(C_values: List[float],
+                                    gamma_values: List[Any],
+                                    kernel_values: List[str]) -> List[Dict[str, Any]]:
+    """
+    Generate all valid parameter combinations for grid search.
+    
+    Args:
+        C_values: List of C parameter values
+        gamma_values: List of gamma parameter values
+        kernel_values: List of kernel types
+        
+    Returns:
+        List of parameter dictionaries
+    """
+    combinations = []
+    for C, gamma, kernel in product(C_values, gamma_values, kernel_values):
+        # Skip invalid combinations (gamma not applicable for linear kernel)
+        if kernel == 'linear' and gamma != 'scale':
+            continue
+        combinations.append({'C': C, 'kernel': kernel, 'gamma': gamma})
+    return combinations
+
+
+def train_single_svm(params: Dict[str, Any],
+                    X_train: np.ndarray,
+                    y_train: np.ndarray,
+                    X_val: np.ndarray,
+                    y_val: np.ndarray) -> Dict[str, Any]:
+    """
+    Train and evaluate a single SVM classifier.
+    
+    Args:
+        params: Dictionary with C, kernel, and gamma parameters
+        X_train: Training features
+        y_train: Training labels
+        X_val: Validation features
+        y_val: Validation labels
+        
+    Returns:
+        Dictionary containing classifier, scaler, metrics, and accuracy
+    """
+    C = params['C']
+    kernel = params['kernel']
+    gamma = params['gamma']
+    
+    print(f"Testing: C={C}, kernel={kernel}, gamma={gamma}")
+    
+    try:
+        classifier, scaler = train_svm_classifier(
+            X_train, y_train, X_val, C=C, kernel=kernel, gamma=gamma
+        )
+        
+        metrics = get_evaluation_metrics(
+            classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
+        )
+        accuracy = metrics['overall_accuracy']
+        
+        print(f"    Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+        
+        # Save metrics JSON for this model
+        metrics_path = save_metrics_json(metrics, C, kernel, gamma)
+        print(f"    Metrics saved to: {metrics_path.name}")
+        
+        return {
+            'params': params,
+            'classifier': classifier,
+            'scaler': scaler,
+            'metrics': metrics,
+            'accuracy': accuracy,
+            'success': True
+        }
+    except Exception as e:
+        print(f"    ERROR: {str(e)}")
+        return {
+            'params': params,
+            'error': str(e),
+            'success': False,
+            'accuracy': 0.0
+        }
+
+
+# -----------------------------
 # Main Execution
 # -----------------------------
 
@@ -355,6 +448,9 @@ if __name__ == "__main__":
     gamma_values = ['scale', 'auto', 0.001, 0.01, 0.1, 1]
     kernel_values = ['rbf', 'linear', 'poly']
     
+    # Generate all valid parameter combinations
+    param_combinations = generate_parameter_combinations(C_values, gamma_values, kernel_values)
+    
     # Create grid search results directory
     results_dir = Path("grid_search_results")
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -362,82 +458,53 @@ if __name__ == "__main__":
     print(f"\n{'='*60}")
     print("GRID SEARCH: Testing all hyperparameter combinations")
     print(f"{'='*60}")
-    print(f"Total combinations: {len(C_values) * len(gamma_values) * len(kernel_values)}")
+    print(f"Total combinations: {len(param_combinations)}")
     print(f"C values: {C_values}")
     print(f"Gamma values: {gamma_values}")
     print(f"Kernel values: {kernel_values}")
+    print(f"Using {MAX_WORKERS} parallel workers")
     print(f"Results will be saved to: {results_dir}")
     print(f"{'='*60}\n")
     
-    best_accuracy = 0.0
-    best_classifier = None
-    best_scaler = None
-    best_metrics = None
-    best_params = None
-    combination_num = 0
+    # Create training function with data bound
+    def train_svm_wrapper(params):
+        return train_single_svm(params, X_train, y_train, X_val, y_val)
     
-    # Iterate over all parameter combinations
-    for C, gamma, kernel in product(C_values, gamma_values, kernel_values):
-        combination_num += 1
-        
-        # Skip invalid combinations (gamma not applicable for linear kernel)
-        if kernel == 'linear' and gamma != 'scale':
-            continue
-        
-        print(f"\n[{combination_num}] Testing: C={C}, kernel={kernel}, gamma={gamma}")
-        
-        try:
-            # Train classifier with current parameters
-            classifier, scaler = train_svm_classifier(
-                X_train, y_train, X_val, C=C, kernel=kernel, gamma=gamma
-            )
-            
-            # Evaluate classifier with original parameters
-            metrics = get_evaluation_metrics(
-                classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
-            )
-            accuracy = metrics['overall_accuracy']
-            
-            print(f"    Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
-            
-            # Save metrics JSON for this model
-            metrics_path = save_metrics_json(metrics, C, kernel, gamma)
-            print(f"    Metrics saved to: {metrics_path.name}")
-            
-            # Track best model
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
-                best_classifier = classifier
-                best_scaler = scaler
-                best_metrics = metrics
-                best_params = {'C': C, 'kernel': kernel, 'gamma': gamma}
-                print(f"    *** NEW BEST! ***")
-        
-        except Exception as e:
-            print(f"    ERROR: {str(e)}")
-            continue
+    # Train all models in parallel
+    results = train_models_parallel(train_svm_wrapper, param_combinations, MAX_WORKERS)
     
-    # Print summary and save best model
-    print(f"\n{'='*60}")
-    print("GRID SEARCH COMPLETE")
-    print(f"{'='*60}")
-    print(f"Best accuracy: {best_accuracy:.4f} ({best_accuracy*100:.2f}%)")
-    print(f"Best parameters: {best_params}")
-    print(f"All metrics JSON files saved to: {results_dir}")
-    print(f"{'='*60}\n")
+    # Filter successful results and find best
+    successful_results = [r for r in results if r.get('success', False)]
     
-    if best_classifier is not None:
+    if not successful_results:
+        print("ERROR: No valid model was trained!")
+    else:
+        best_result = max(successful_results, key=lambda x: x['accuracy'])
+        best_params = best_result['params']
+        
+        print(f"\n{'='*60}")
+        print("GRID SEARCH COMPLETE")
+        print(f"{'='*60}")
+        print(f"Best accuracy: {best_result['accuracy']:.4f} ({best_result['accuracy']*100:.2f}%)")
+        print(f"Best parameters: {best_params}")
+        print(f"All metrics JSON files saved to: {results_dir}")
+        print(f"{'='*60}\n")
+        
         print("Evaluating best classifier...")
         evaluate_classifier(
-            best_classifier, best_scaler, X_val, y_val,
-            C=best_params['C'], kernel=best_params['kernel'], gamma=best_params['gamma']
+            best_result['classifier'],
+            best_result['scaler'],
+            X_val,
+            y_val,
+            C=best_params['C'],
+            kernel=best_params['kernel'],
+            gamma=best_params['gamma']
         )
         
         print("\nSaving best classifier, scaler, and evaluation metrics...")
-        save_classifier(best_classifier, best_scaler, best_metrics)
+        save_classifier(best_result['classifier'], best_result['scaler'], best_result['metrics'])
         
         print("\nSVM classifier training complete!")
-    else:
-        print("ERROR: No valid model was trained!")
+
 
 
