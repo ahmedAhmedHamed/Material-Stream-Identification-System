@@ -279,6 +279,69 @@ def save_classifier(classifier: KNeighborsClassifier,
     print(f"All files saved in directory: {output_dir}")
 
 
+def update_accuracies_json(n: int, accuracy: float, json_path: str = "knn_accuracies.json"):
+    """
+    Update accuracies JSON file with new n and accuracy pair.
+    
+    Args:
+        n: Number of neighbors
+        accuracy: Overall accuracy value
+        json_path: Path to JSON file to update
+    """
+    path = Path(json_path)
+    
+    if path.exists():
+        with open(path, 'r') as f:
+            data = json.load(f)
+    else:
+        data = {"accuracies": []}
+    
+    data["accuracies"].append({
+        "n": n,
+        "accuracy": accuracy,
+        "accuracy_percent": accuracy * 100
+    })
+    
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def save_best_model(classifier: KNeighborsClassifier,
+                   scaler: object,
+                   metrics: Dict[str, Any],
+                   base_path: str = "."):
+    """
+    Save best model to a dedicated directory.
+    
+    Args:
+        classifier: Trained KNN classifier
+        scaler: Fitted StandardScaler
+        metrics: Evaluation metrics dictionary
+        base_path: Base directory to save in
+    """
+    output_dir = Path(base_path) / "KNN_best"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    classifier_path = output_dir / "knn_classifier.joblib"
+    scaler_path = output_dir / "knn_scaler.joblib"
+    metrics_path = output_dir / "evaluation_metrics.json"
+    
+    joblib.dump(classifier, classifier_path)
+    joblib.dump(scaler, scaler_path)
+    
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    
+    print(f"\n{'='*60}")
+    print("BEST MODEL SAVED")
+    print(f"{'='*60}")
+    print(f"Best model saved to {classifier_path}")
+    print(f"Best scaler saved to {scaler_path}")
+    print(f"Best metrics saved to {metrics_path}")
+    print(f"Best N value: {metrics.get('n_neighbors', 'N/A')}")
+    print(f"Best accuracy: {metrics['overall_accuracy']:.4f} ({metrics['overall_accuracy_percent']:.2f}%)")
+
+
 # -----------------------------
 # Main Execution
 # -----------------------------
@@ -292,14 +355,49 @@ if __name__ == "__main__":
     X_val, y_val = load_val_features()
     print(f"Validation samples: {len(X_val)}")
     
-    print("Scaling features and training KNN classifier...")
-    classifier, scaler = train_knn_classifier(X_train, y_train, X_val, n_neighbors=1)
+    best_accuracy = -1.0
+    best_classifier = None
+    best_scaler = None
+    best_metrics = None
+    best_n = None
     
-    print("Evaluating classifier...")
-    metrics = evaluate_classifier(classifier, scaler, X_val, y_val)
+    n_values = list(range(1, 51, 5))  # n = 1, 6, 11, 16, 21, 26, 31, 36, 41, 46
     
-    print("\nSaving classifier, scaler, and evaluation metrics...")
-    save_classifier(classifier, scaler, metrics)
+    print(f"\n{'='*60}")
+    print(f"TRAINING KNN CLASSIFIERS FOR N = {n_values}")
+    print(f"{'='*60}\n")
+    
+    for n in n_values:
+        print(f"\n{'='*60}")
+        print(f"Training KNN with n_neighbors = {n}")
+        print(f"{'='*60}")
+        
+        classifier, scaler = train_knn_classifier(X_train, y_train, X_val, n_neighbors=n)
+        
+        metrics = get_evaluation_metrics(classifier, scaler, X_val, y_val)
+        accuracy = metrics['overall_accuracy']
+        
+        print(f"N = {n}: Accuracy = {accuracy:.4f} ({accuracy*100:.2f}%)")
+        
+        update_accuracies_json(n, accuracy)
+        
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_classifier = classifier
+            best_scaler = scaler
+            best_metrics = metrics
+            best_n = n
+            print(f"*** New best model! Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%) ***")
+    
+    print(f"\n{'='*60}")
+    print("TRAINING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Best N value: {best_n}")
+    print(f"Best accuracy: {best_accuracy:.4f} ({best_accuracy*100:.2f}%)")
+    
+    if best_classifier is not None:
+        print("\nSaving best model...")
+        save_best_model(best_classifier, best_scaler, best_metrics)
     
     print("\nKNN classifier training complete!")
 
