@@ -389,7 +389,7 @@ if __name__ == "__main__":
     
     # Apply uniform augmentation: all classes augmented by the same multiplier
     # e.g., 1.0 = no augmentation, 2.0 = double each class (preserves imbalance)
-    augmentation_multiplier = 1.0  # Change to 2.0 to double all classes, etc.
+    augmentation_multiplier = 1.3  # Change to 2.0 to double all classes, etc.
     X_train, y_train, X_val, y_val = build_feature_matrix(
         image_paths,
         augmentation_multiplier=augmentation_multiplier
