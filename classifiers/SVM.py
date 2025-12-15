@@ -11,6 +11,7 @@ import os
 import json
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
+from itertools import product
 
 import numpy as np
 from sklearn.svm import SVC
@@ -126,7 +127,10 @@ def train_svm_classifier(X_train: np.ndarray,
 def get_evaluation_metrics(classifier: SVC,
                           scaler: object,
                           X_val: np.ndarray,
-                          y_val: np.ndarray) -> Dict[str, Any]:
+                          y_val: np.ndarray,
+                          C: Optional[float] = None,
+                          kernel: Optional[str] = None,
+                          gamma: Optional[Any] = None) -> Dict[str, Any]:
     """
     Evaluate classifier and return metrics as dictionary.
     
@@ -135,6 +139,9 @@ def get_evaluation_metrics(classifier: SVC,
         scaler: Fitted StandardScaler
         X_val: Validation feature matrix
         y_val: Validation labels
+        C: Original C parameter used (optional)
+        kernel: Original kernel parameter used (optional)
+        gamma: Original gamma parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
@@ -162,17 +169,20 @@ def get_evaluation_metrics(classifier: SVC,
         y_val, y_pred, target_names=[str(c) for c in unique_classes], output_dict=True
     )
     
+    # Use provided parameters or fall back to classifier attributes
+    model_params = {
+        "C": float(C if C is not None else classifier.C),
+        "kernel": str(kernel if kernel is not None else classifier.kernel),
+        "gamma": str(gamma if gamma is not None else classifier.gamma)
+    }
+    
     return {
         "overall_accuracy": overall_accuracy,
         "overall_accuracy_percent": overall_accuracy * 100,
         "per_class_accuracy": per_class_accuracy,
         "confusion_matrix": confusion_matrix_dict,
         "classification_report": report_dict,
-        "model_parameters": {
-            "C": float(classifier.C),
-            "kernel": str(classifier.kernel),
-            "gamma": str(classifier.gamma)
-        },
+        "model_parameters": model_params,
         "validation_samples": int(len(y_val))
     }
 
@@ -180,7 +190,10 @@ def get_evaluation_metrics(classifier: SVC,
 def evaluate_classifier(classifier: SVC,
                        scaler: object,
                        X_val: np.ndarray,
-                       y_val: np.ndarray) -> Dict[str, Any]:
+                       y_val: np.ndarray,
+                       C: Optional[float] = None,
+                       kernel: Optional[str] = None,
+                       gamma: Optional[Any] = None) -> Dict[str, Any]:
     """
     Evaluate classifier, print results, and return metrics.
     
@@ -189,11 +202,16 @@ def evaluate_classifier(classifier: SVC,
         scaler: Fitted StandardScaler
         X_val: Validation feature matrix
         y_val: Validation labels
+        C: Original C parameter used (optional)
+        kernel: Original kernel parameter used (optional)
+        gamma: Original gamma parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
     """
-    metrics = get_evaluation_metrics(classifier, scaler, X_val, y_val)
+    metrics = get_evaluation_metrics(
+        classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
+    )
     
     print(f"\n{'='*60}")
     print("SVM CLASSIFIER EVALUATION RESULTS")
@@ -255,6 +273,38 @@ def get_next_svm_directory(base_path: str = ".") -> Path:
 # Model Persistence
 # -----------------------------
 
+def save_metrics_json(metrics: Dict[str, Any],
+                     C: float,
+                     kernel: str,
+                     gamma: Any,
+                     base_path: str = ".") -> Path:
+    """
+    Save metrics JSON for a single model configuration.
+    
+    Args:
+        metrics: Evaluation metrics dictionary
+        C: C parameter value
+        kernel: Kernel type
+        gamma: Gamma parameter value
+        base_path: Base directory to save in
+        
+    Returns:
+        Path to saved metrics file
+    """
+    results_dir = Path(base_path) / "grid_search_results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create descriptive filename
+    gamma_str = str(gamma).replace('.', '_')
+    filename = f"metrics_C{C}_kernel{kernel}_gamma{gamma_str}.json"
+    metrics_path = results_dir / filename
+    
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    
+    return metrics_path
+
+
 def save_classifier(classifier: SVC,
                    scaler: object,
                    metrics: Dict[str, Any],
@@ -300,13 +350,93 @@ if __name__ == "__main__":
     X_val, y_val = load_val_features()
     print(f"Validation samples: {len(X_val)}")
     
-    print("Scaling features and training SVM classifier...")
-    classifier, scaler = train_svm_classifier(X_train, y_train, X_val, C=1.0, kernel='rbf', gamma='scale')
+    # Define parameter grid for grid search
+    C_values = [0.1, 1, 10, 100]
+    gamma_values = ['scale', 'auto', 0.001, 0.01, 0.1, 1]
+    kernel_values = ['rbf', 'linear', 'poly']
     
-    print("Evaluating classifier...")
-    metrics = evaluate_classifier(classifier, scaler, X_val, y_val)
+    # Create grid search results directory
+    results_dir = Path("grid_search_results")
+    results_dir.mkdir(parents=True, exist_ok=True)
     
-    print("\nSaving classifier, scaler, and evaluation metrics...")
-    save_classifier(classifier, scaler, metrics)
+    print(f"\n{'='*60}")
+    print("GRID SEARCH: Testing all hyperparameter combinations")
+    print(f"{'='*60}")
+    print(f"Total combinations: {len(C_values) * len(gamma_values) * len(kernel_values)}")
+    print(f"C values: {C_values}")
+    print(f"Gamma values: {gamma_values}")
+    print(f"Kernel values: {kernel_values}")
+    print(f"Results will be saved to: {results_dir}")
+    print(f"{'='*60}\n")
     
-    print("\nSVM classifier training complete!")
+    best_accuracy = 0.0
+    best_classifier = None
+    best_scaler = None
+    best_metrics = None
+    best_params = None
+    combination_num = 0
+    
+    # Iterate over all parameter combinations
+    for C, gamma, kernel in product(C_values, gamma_values, kernel_values):
+        combination_num += 1
+        
+        # Skip invalid combinations (gamma not applicable for linear kernel)
+        if kernel == 'linear' and gamma != 'scale':
+            continue
+        
+        print(f"\n[{combination_num}] Testing: C={C}, kernel={kernel}, gamma={gamma}")
+        
+        try:
+            # Train classifier with current parameters
+            classifier, scaler = train_svm_classifier(
+                X_train, y_train, X_val, C=C, kernel=kernel, gamma=gamma
+            )
+            
+            # Evaluate classifier with original parameters
+            metrics = get_evaluation_metrics(
+                classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
+            )
+            accuracy = metrics['overall_accuracy']
+            
+            print(f"    Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+            
+            # Save metrics JSON for this model
+            metrics_path = save_metrics_json(metrics, C, kernel, gamma)
+            print(f"    Metrics saved to: {metrics_path.name}")
+            
+            # Track best model
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_classifier = classifier
+                best_scaler = scaler
+                best_metrics = metrics
+                best_params = {'C': C, 'kernel': kernel, 'gamma': gamma}
+                print(f"    *** NEW BEST! ***")
+        
+        except Exception as e:
+            print(f"    ERROR: {str(e)}")
+            continue
+    
+    # Print summary and save best model
+    print(f"\n{'='*60}")
+    print("GRID SEARCH COMPLETE")
+    print(f"{'='*60}")
+    print(f"Best accuracy: {best_accuracy:.4f} ({best_accuracy*100:.2f}%)")
+    print(f"Best parameters: {best_params}")
+    print(f"All metrics JSON files saved to: {results_dir}")
+    print(f"{'='*60}\n")
+    
+    if best_classifier is not None:
+        print("Evaluating best classifier...")
+        evaluate_classifier(
+            best_classifier, best_scaler, X_val, y_val,
+            C=best_params['C'], kernel=best_params['kernel'], gamma=best_params['gamma']
+        )
+        
+        print("\nSaving best classifier, scaler, and evaluation metrics...")
+        save_classifier(best_classifier, best_scaler, best_metrics)
+        
+        print("\nSVM classifier training complete!")
+    else:
+        print("ERROR: No valid model was trained!")
+
