@@ -6,9 +6,14 @@ Outputs fixed-size feature vectors suitable for SVM and k-NN.
 
 Features:
 - HSV color histogram
-- Local Binary Patterns (LBP)
+- Local Binary Patterns (LBP) - single scale
+- Multi-scale Local Binary Patterns (LBP)
 - Gabor texture filters
 - Edge density
+- Gray-Level Co-occurrence Matrix (GLCM) features
+- Histogram of Oriented Gradients (HOG)
+- Gradient magnitude histogram
+- Color moments (mean, std, skewness per channel)
 
 Author: (your name)
 """
@@ -19,7 +24,12 @@ import random
 
 import cv2
 import numpy as np
-from skimage.feature import local_binary_pattern
+from skimage.feature import (
+    local_binary_pattern,
+    hog,
+    graycomatrix,
+    graycoprops
+)
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
@@ -39,9 +49,52 @@ IMAGE_SIZE = (256, 256)
 HSV_BINS = (8, 8, 8)       # 512 dims
 LBP_POINTS = 8
 LBP_RADIUS = 1             # 59 dims (uniform)
+LBP_MULTI_SCALE_RADII = [1, 2, 3]  # Multi-scale LBP radii
 GABOR_ORIENTATIONS = 4     # 8 dims (mean + std per orientation)
+GLCM_DISTANCES = [1, 2]    # GLCM distances
+GLCM_ANGLES = [0, np.pi/4, np.pi/2, 3*np.pi/4]  # GLCM angles (in radians)
+GLCM_PROPERTIES = ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation']  # 5 props
+HOG_ORIENTATIONS = 9       # HOG orientations
+HOG_PIXELS_PER_CELL = (8, 8)  # HOG cell size
+HOG_CELLS_PER_BLOCK = (2, 2)  # HOG block size
+GRADIENT_HIST_BINS = 32   # Gradient magnitude histogram bins
+COLOR_MOMENTS_CHANNELS = 3  # RGB channels
 
-TOTAL_FEATURE_DIM = 512 + 59 + (2 * GABOR_ORIENTATIONS) + 1
+# Calculate feature dimensions
+HSV_DIM = np.prod(HSV_BINS)  # 512
+LBP_DIM = 59  # uniform LBP
+LBP_MULTI_DIM = 59 * len(LBP_MULTI_SCALE_RADII)  # 177 (59 * 3)
+GABOR_DIM = 2 * GABOR_ORIENTATIONS  # 8
+EDGE_DENSITY_DIM = 1
+GLCM_DIM = len(GLCM_PROPERTIES) * len(GLCM_DISTANCES) * len(GLCM_ANGLES)  # 5 * 2 * 4 = 40
+GRADIENT_HIST_DIM = GRADIENT_HIST_BINS  # 32
+COLOR_MOMENTS_DIM = 3 * COLOR_MOMENTS_CHANNELS  # 9 (mean, std, skewness per channel)
+
+
+def calculate_hog_dimension():
+    """
+    Calculate HOG feature dimension based on image size and HOG parameters.
+    
+    Returns:
+        HOG feature dimension
+    """
+    dummy_image = np.zeros(IMAGE_SIZE, dtype=np.uint8)
+    hog_features = hog(
+        dummy_image,
+        orientations=HOG_ORIENTATIONS,
+        pixels_per_cell=HOG_PIXELS_PER_CELL,
+        cells_per_block=HOG_CELLS_PER_BLOCK,
+        block_norm='L2-Hys',
+        feature_vector=True
+    )
+    return len(hog_features)
+
+
+HOG_DIM = calculate_hog_dimension()
+
+TOTAL_FEATURE_DIM = (HSV_DIM + LBP_DIM + LBP_MULTI_DIM + GABOR_DIM + 
+                     EDGE_DENSITY_DIM + GLCM_DIM +
+                     GRADIENT_HIST_DIM + COLOR_MOMENTS_DIM)
 
 MAX_WORKERS = 30  # Number of threads for parallel processing
 
@@ -115,12 +168,142 @@ def extract_edge_density(image):
     return np.array([edges.mean()], dtype=np.float32)
 
 
+def extract_multiscale_lbp(image):
+    """
+    Extract LBP features at multiple scales.
+    
+    Args:
+        image: RGB uint8 image
+        
+    Returns:
+        1D array of concatenated LBP histograms from multiple scales
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    all_features = []
+    
+    for radius in LBP_MULTI_SCALE_RADII:
+        lbp = local_binary_pattern(
+            gray,
+            P=LBP_POINTS,
+            R=radius,
+            method="uniform"
+        )
+        hist, _ = np.histogram(lbp, bins=59, range=(0, 59))
+        hist = hist.astype(np.float32)
+        hist /= (hist.sum() + 1e-6)
+        all_features.append(hist)
+    
+    return np.concatenate(all_features)
+
+
+def extract_glcm_features(image):
+    """
+    Extract Gray-Level Co-occurrence Matrix (GLCM) features.
+    
+    Args:
+        image: RGB uint8 image
+        
+    Returns:
+        1D array of GLCM properties for all distances and angles
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Quantize to 8 levels for GLCM
+    gray = (gray // 32).astype(np.uint8)
+    
+    glcm = graycomatrix(
+        gray,
+        distances=GLCM_DISTANCES,
+        angles=GLCM_ANGLES,
+        levels=8,
+        symmetric=True,
+        normed=True
+    )
+    
+    features = []
+    for prop in GLCM_PROPERTIES:
+        prop_values = graycoprops(glcm, prop)
+        features.extend(prop_values.flatten())
+    
+    return np.array(features, dtype=np.float32)
+
+
+def extract_hog_features(image):
+    """
+    Extract Histogram of Oriented Gradients (HOG) features.
+    
+    Args:
+        image: RGB uint8 image
+        
+    Returns:
+        1D array of HOG features
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    
+    features = hog(
+        gray,
+        orientations=HOG_ORIENTATIONS,
+        pixels_per_cell=HOG_PIXELS_PER_CELL,
+        cells_per_block=HOG_CELLS_PER_BLOCK,
+        block_norm='L2-Hys',
+        feature_vector=True
+    )
+    
+    return features.astype(np.float32)
+
+
+def extract_gradient_histogram(image):
+    """
+    Extract histogram of gradient magnitudes.
+    
+    Args:
+        image: RGB uint8 image
+        
+    Returns:
+        1D array of gradient magnitude histogram
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    
+    grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    hist, _ = np.histogram(magnitude, bins=GRADIENT_HIST_BINS, range=(0, 255))
+    hist = hist.astype(np.float32)
+    hist /= (hist.sum() + 1e-6)
+    
+    return hist
+
+
+def extract_color_moments(image):
+    """
+    Extract color moments (mean, std, skewness) for each channel.
+    
+    Args:
+        image: RGB uint8 image
+        
+    Returns:
+        1D array of color moments (9 dims: mean, std, skewness per channel)
+    """
+    moments = []
+    
+    for channel in range(COLOR_MOMENTS_CHANNELS):
+        channel_data = image[:, :, channel].flatten().astype(np.float32)
+        mean = np.mean(channel_data)
+        std = np.std(channel_data)
+        skewness = np.mean(((channel_data - mean) / (std + 1e-6)) ** 3)
+        moments.extend([mean, std, skewness])
+    
+    return np.array(moments, dtype=np.float32)
+
+
 # -----------------------------
 # Full feature vector
 # -----------------------------
 
 def extract_features(image):
     """
+    Extract all features from an image.
+    
     Input: RGB uint8 image
     Output: 1D NumPy array of fixed length
     """
@@ -129,11 +312,15 @@ def extract_features(image):
     features = np.concatenate([
         extract_hsv_histogram(image),
         extract_lbp(image),
+        extract_multiscale_lbp(image),
         extract_gabor(image),
-        # extract_edge_density(image)
+        extract_edge_density(image),
+        extract_glcm_features(image),
+        # extract_hog_features(image),
+        # extract_gradient_histogram(image),
+        # extract_color_moments(image)
     ])
 
-    # assert features.shape[0] == TOTAL_FEATURE_DIM
     return features
 
 

@@ -351,10 +351,13 @@ if __name__ == "__main__":
     print(f"Validation samples: {len(X_val)}")
     
     # Define parameter grid for grid search
-    C_values = [0.1, 1, 10, 100]
-    gamma_values = ['scale', 'auto', 0.001, 0.01, 0.1, 1]
-    kernel_values = ['rbf', 'linear', 'poly']
-    
+    # C_values = [0.1, 1, 10, 100]
+    C_values = [0.1]
+    # gamma_values = ['scale', 'auto', 0.001, 0.01, 0.1, 1]
+    gamma_values = ['scale']
+    # kernel_values = ['rbf', 'linear', 'poly']
+    kernel_values = ['rbf']
+
     # Create grid search results directory
     results_dir = Path("grid_search_results")
     results_dir.mkdir(parents=True, exist_ok=True)
