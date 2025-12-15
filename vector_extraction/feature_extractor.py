@@ -229,88 +229,36 @@ def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np
     return np.array(X_val), np.array(y_val)
 
 
-def calculate_target_size(class_sizes: List[int], 
-                          strategy: str = "mean",
-                          multiplier: float = 1.2,
-                          max_augmentation_ratio: float = 3.0) -> int:
-    """
-    Calculate target size for class balancing based on strategy.
-    
-    Args:
-        class_sizes: List of class sizes in training set
-        strategy: Balancing strategy - "mean", "median", "max", or "multiplier"
-        multiplier: Multiplier for "multiplier" strategy or applied to mean/median
-        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
-        
-    Returns:
-        Target size for all classes
-    """
-    if not class_sizes:
-        raise ValueError("class_sizes cannot be empty")
-    
-    if strategy == "mean":
-        base_size = int(np.mean(class_sizes))
-    elif strategy == "median":
-        base_size = int(np.median(class_sizes))
-    elif strategy == "max":
-        base_size = max(class_sizes)
-    elif strategy == "multiplier":
-        base_size = max(class_sizes)
-    else:
-        raise ValueError(f"Unknown strategy: {strategy}. Use 'mean', 'median', 'max', or 'multiplier'")
-    
-    target_size = int(base_size * multiplier)
-    
-    # Apply maximum augmentation limit: don't augment more than max_augmentation_ratio * original
-    min_class_size = min(class_sizes)
-    max_allowed = int(min_class_size * max_augmentation_ratio)
-    
-    if target_size > max_allowed:
-        target_size = max_allowed
-    
-    return target_size
-
-
 def process_training_set(class_to_train_paths: Dict[str, List[str]], 
-                        balance_strategy: str = "mean",
-                        balance_multiplier: float = 1.2,
-                        max_augmentation_ratio: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
+                        augmentation_multiplier: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Process training images (original + augmented) with flexible balancing.
+    Process training images (original + uniformly augmented).
+    Applies the same augmentation multiplier to all classes, preserving original class distribution.
     
     Args:
         class_to_train_paths: Dictionary mapping class labels to training image paths
-        balance_strategy: Strategy for balancing - "mean", "median", "max", or "multiplier"
-                         (default: "mean" - balances to mean class size)
-        balance_multiplier: Multiplier applied to base size (default: 1.2)
-        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
-                                Prevents excessive augmentation for very small classes
+        augmentation_multiplier: Multiplier for augmentation (default: 1.0 = no augmentation)
+                                 e.g., 1.0 = no augmentation, 2.0 = double each class
         
     Returns:
         Tuple of (X_train, y_train) arrays
     """
-    class_sizes = [len(paths) for paths in class_to_train_paths.values()]
-    target_size = calculate_target_size(
-        class_sizes, 
-        strategy=balance_strategy,
-        multiplier=balance_multiplier,
-        max_augmentation_ratio=max_augmentation_ratio
-    )
-    
     X_train = []
     y_train = []
     
     for label, paths in class_to_train_paths.items():
-        current_count = len(paths)
-        needed_count = target_size - current_count
+        original_count = len(paths)
+        augmented_count = int(original_count * augmentation_multiplier)
         
+        # Add original images
         for path in paths:
             features, label_val = process_image_for_features(path)
             X_train.append(features)
             y_train.append(label_val)
         
-        if needed_count > 0:
-            augmented_samples = generate_augmented_samples(paths, needed_count)
+        # Add augmented images
+        if augmented_count > 0:
+            augmented_samples = generate_augmented_samples(paths, augmented_count)
             for aug_image, label_val in augmented_samples:
                 features = extract_features(aug_image)
                 X_train.append(features)
@@ -324,13 +272,12 @@ def build_feature_matrix(image_paths: List[str],
                          val_output_path: str = "../features_val.npz",
                          test_size: float = 0.3,
                          random_state: int = 42,
-                         balance_strategy: str = "mean",
-                         balance_multiplier: float = 1.2,
-                         max_augmentation_ratio: float = 3.0):
+                         augmentation_multiplier: float = 1.0):
     """
-    Build feature matrix with data augmentation and split into train/validation.
+    Build feature matrix with uniform data augmentation and split into train/validation.
     Validation dataset is 30% of original data (pre-augmentation) and is not augmented.
-    Training dataset is 70% of original data plus augmented samples to balance classes.
+    Training dataset is 70% of original data plus uniformly augmented samples.
+    All classes are augmented by the same multiplier, preserving original class distribution.
     
     Args:
         image_paths: list of image file paths
@@ -338,11 +285,8 @@ def build_feature_matrix(image_paths: List[str],
         val_output_path: path to save validation .npz file
         test_size: proportion of original data for validation (default: 0.3)
         random_state: random seed for reproducibility (default: 42)
-        balance_strategy: Strategy for balancing - "mean", "median", "max", or "multiplier"
-                         (default: "mean" - balances to mean class size)
-        balance_multiplier: Multiplier applied to base size (default: 1.2)
-        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
-                                Prevents excessive augmentation for very small classes
+        augmentation_multiplier: Multiplier for uniform augmentation (default: 1.0 = no augmentation)
+                                  e.g., 1.0 = no augmentation, 2.0 = double each class
         
     Returns:
         tuple of (X_train, y_train, X_val, y_val) arrays
@@ -362,9 +306,7 @@ def build_feature_matrix(image_paths: List[str],
     X_val, y_val = process_validation_set(class_to_val_paths)
     X_train, y_train = process_training_set(
         class_to_train_paths, 
-        balance_strategy=balance_strategy,
-        balance_multiplier=balance_multiplier,
-        max_augmentation_ratio=max_augmentation_ratio
+        augmentation_multiplier=augmentation_multiplier
     )
     
     np.savez(train_output_path, X=X_train, y=y_train)
@@ -437,18 +379,18 @@ if __name__ == "__main__":
     class_to_paths = analyze_class_distribution(image_paths)
     print_class_distribution(class_to_paths, "Original Dataset Distribution")
     
-    # Use "mean" strategy with 1.2 multiplier for balanced but not excessive augmentation
-    # This will balance classes to approximately 1.2x the mean class size
+    # Apply uniform augmentation: all classes augmented by the same multiplier
+    # e.g., 1.0 = no augmentation, 2.0 = double each class (preserves imbalance)
+    augmentation_multiplier = 1.0  # Change to 2.0 to double all classes, etc.
     X_train, y_train, X_val, y_val = build_feature_matrix(
         image_paths,
-        balance_strategy="mean",
-        balance_multiplier=1.2,
-        max_augmentation_ratio=3.0
+        augmentation_multiplier=augmentation_multiplier
     )
     
     print(f"\n{'='*60}")
     print("Feature Extraction Complete")
     print(f"{'='*60}")
+    print(f"Augmentation multiplier: {augmentation_multiplier}")
     print(f"Training samples: {len(X_train)}")
     print(f"Validation samples: {len(X_val)}")
     
