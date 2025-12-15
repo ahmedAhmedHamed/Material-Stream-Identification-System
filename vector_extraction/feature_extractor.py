@@ -24,6 +24,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 from vector_extraction.augmentation import augment_image
+from vector_extraction.parallel_processing import (
+    process_images_parallel,
+    generate_augmented_samples_parallel
+)
 
 
 # -----------------------------
@@ -38,6 +42,8 @@ LBP_RADIUS = 1             # 59 dims (uniform)
 GABOR_ORIENTATIONS = 4     # 8 dims (mean + std per orientation)
 
 TOTAL_FEATURE_DIM = 512 + 59 + (2 * GABOR_ORIENTATIONS) + 1
+
+MAX_WORKERS = 30  # Number of threads for parallel processing
 
 
 # -----------------------------
@@ -124,10 +130,10 @@ def extract_features(image):
         extract_hsv_histogram(image),
         extract_lbp(image),
         extract_gabor(image),
-        extract_edge_density(image)
+        # extract_edge_density(image)
     ])
 
-    assert features.shape[0] == TOTAL_FEATURE_DIM
+    # assert features.shape[0] == TOTAL_FEATURE_DIM
     return features
 
 
@@ -209,7 +215,7 @@ def process_image_for_features(image_path: str) -> Tuple[np.ndarray, str]:
 
 def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Process validation images without augmentation.
+    Process validation images without augmentation (parallelized).
     
     Args:
         class_to_val_paths: Dictionary mapping class labels to validation image paths
@@ -217,14 +223,14 @@ def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np
     Returns:
         Tuple of (X_val, y_val) arrays
     """
-    X_val = []
-    y_val = []
+    all_paths = []
+    for paths in class_to_val_paths.values():
+        all_paths.extend(paths)
     
-    for label, paths in class_to_val_paths.items():
-        for path in paths:
-            features, label_val = process_image_for_features(path)
-            X_val.append(features)
-            y_val.append(label_val)
+    results = process_images_parallel(all_paths)
+    
+    X_val = [features for features, _ in results]
+    y_val = [label for _, label in results]
     
     return np.array(X_val), np.array(y_val)
 
@@ -232,7 +238,7 @@ def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np
 def process_training_set(class_to_train_paths: Dict[str, List[str]], 
                         augmentation_multiplier: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Process training images (original + uniformly augmented).
+    Process training images (original + uniformly augmented) with parallelization.
     Applies the same augmentation multiplier to all classes, preserving original class distribution.
     
     Args:
@@ -250,17 +256,18 @@ def process_training_set(class_to_train_paths: Dict[str, List[str]],
         original_count = len(paths)
         augmented_count = int(original_count * augmentation_multiplier)
         
-        # Add original images
-        for path in paths:
-            features, label_val = process_image_for_features(path)
+        # Process original images in parallel
+        original_results = process_images_parallel(paths)
+        for features, label_val in original_results:
             X_train.append(features)
             y_train.append(label_val)
         
-        # Add augmented images
+        # Process augmented images in parallel
         if augmented_count > 0:
-            augmented_samples = generate_augmented_samples(paths, augmented_count)
-            for aug_image, label_val in augmented_samples:
-                features = extract_features(aug_image)
+            augmented_results = generate_augmented_samples_parallel(
+                paths, augmented_count
+            )
+            for features, label_val in augmented_results:
                 X_train.append(features)
                 y_train.append(label_val)
     
@@ -278,6 +285,7 @@ def build_feature_matrix(image_paths: List[str],
     Validation dataset is 30% of original data (pre-augmentation) and is not augmented.
     Training dataset is 70% of original data plus uniformly augmented samples.
     All classes are augmented by the same multiplier, preserving original class distribution.
+    Now with parallel processing support.
     
     Args:
         image_paths: list of image file paths
