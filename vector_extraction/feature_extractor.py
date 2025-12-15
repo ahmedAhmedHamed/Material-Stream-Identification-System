@@ -229,21 +229,73 @@ def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np
     return np.array(X_val), np.array(y_val)
 
 
-def process_training_set(class_to_train_paths: Dict[str, List[str]], 
-                        balance_multiplier: float = 1.5) -> Tuple[np.ndarray, np.ndarray]:
+def calculate_target_size(class_sizes: List[int], 
+                          strategy: str = "mean",
+                          multiplier: float = 1.2,
+                          max_augmentation_ratio: float = 3.0) -> int:
     """
-    Process training images (original + augmented).
-    Balances all classes to equal size (balance_multiplier x largest class in training set).
+    Calculate target size for class balancing based on strategy.
+    
+    Args:
+        class_sizes: List of class sizes in training set
+        strategy: Balancing strategy - "mean", "median", "max", or "multiplier"
+        multiplier: Multiplier for "multiplier" strategy or applied to mean/median
+        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
+        
+    Returns:
+        Target size for all classes
+    """
+    if not class_sizes:
+        raise ValueError("class_sizes cannot be empty")
+    
+    if strategy == "mean":
+        base_size = int(np.mean(class_sizes))
+    elif strategy == "median":
+        base_size = int(np.median(class_sizes))
+    elif strategy == "max":
+        base_size = max(class_sizes)
+    elif strategy == "multiplier":
+        base_size = max(class_sizes)
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}. Use 'mean', 'median', 'max', or 'multiplier'")
+    
+    target_size = int(base_size * multiplier)
+    
+    # Apply maximum augmentation limit: don't augment more than max_augmentation_ratio * original
+    min_class_size = min(class_sizes)
+    max_allowed = int(min_class_size * max_augmentation_ratio)
+    
+    if target_size > max_allowed:
+        target_size = max_allowed
+    
+    return target_size
+
+
+def process_training_set(class_to_train_paths: Dict[str, List[str]], 
+                        balance_strategy: str = "mean",
+                        balance_multiplier: float = 1.2,
+                        max_augmentation_ratio: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Process training images (original + augmented) with flexible balancing.
     
     Args:
         class_to_train_paths: Dictionary mapping class labels to training image paths
-        balance_multiplier: Multiplier for balancing (default: 1.5, was 2.0)
+        balance_strategy: Strategy for balancing - "mean", "median", "max", or "multiplier"
+                         (default: "mean" - balances to mean class size)
+        balance_multiplier: Multiplier applied to base size (default: 1.2)
+        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
+                                Prevents excessive augmentation for very small classes
         
     Returns:
         Tuple of (X_train, y_train) arrays
     """
-    max_class_size = max(len(paths) for paths in class_to_train_paths.values())
-    target_size = int(max_class_size * balance_multiplier)
+    class_sizes = [len(paths) for paths in class_to_train_paths.values()]
+    target_size = calculate_target_size(
+        class_sizes, 
+        strategy=balance_strategy,
+        multiplier=balance_multiplier,
+        max_augmentation_ratio=max_augmentation_ratio
+    )
     
     X_train = []
     y_train = []
@@ -272,7 +324,9 @@ def build_feature_matrix(image_paths: List[str],
                          val_output_path: str = "../features_val.npz",
                          test_size: float = 0.3,
                          random_state: int = 42,
-                         balance_multiplier: float = 1.5):
+                         balance_strategy: str = "mean",
+                         balance_multiplier: float = 1.2,
+                         max_augmentation_ratio: float = 3.0):
     """
     Build feature matrix with data augmentation and split into train/validation.
     Validation dataset is 30% of original data (pre-augmentation) and is not augmented.
@@ -284,7 +338,11 @@ def build_feature_matrix(image_paths: List[str],
         val_output_path: path to save validation .npz file
         test_size: proportion of original data for validation (default: 0.3)
         random_state: random seed for reproducibility (default: 42)
-        balance_multiplier: multiplier for class balancing (default: 1.5)
+        balance_strategy: Strategy for balancing - "mean", "median", "max", or "multiplier"
+                         (default: "mean" - balances to mean class size)
+        balance_multiplier: Multiplier applied to base size (default: 1.2)
+        max_augmentation_ratio: Maximum ratio of augmented to original samples (default: 3.0)
+                                Prevents excessive augmentation for very small classes
         
     Returns:
         tuple of (X_train, y_train, X_val, y_val) arrays
@@ -302,7 +360,12 @@ def build_feature_matrix(image_paths: List[str],
         class_to_val_paths[label] = val_paths
     
     X_val, y_val = process_validation_set(class_to_val_paths)
-    X_train, y_train = process_training_set(class_to_train_paths, balance_multiplier=balance_multiplier)
+    X_train, y_train = process_training_set(
+        class_to_train_paths, 
+        balance_strategy=balance_strategy,
+        balance_multiplier=balance_multiplier,
+        max_augmentation_ratio=max_augmentation_ratio
+    )
     
     np.savez(train_output_path, X=X_train, y=y_train)
     np.savez(val_output_path, X=X_val, y=y_val)
@@ -332,6 +395,36 @@ def get_image_paths(root):
     return [str(p) for p in Path(root).rglob("*") if p.suffix.lower() in exts]
 
 
+def print_class_distribution(class_to_paths: Dict[str, List[str]], title: str = "Class Distribution"):
+    """
+    Print class distribution statistics.
+    
+    Args:
+        class_to_paths: Dictionary mapping class labels to image paths
+        title: Title for the distribution report
+    """
+    print(f"\n{'='*60}")
+    print(title)
+    print(f"{'='*60}")
+    
+    class_sizes = {label: len(paths) for label, paths in class_to_paths.items()}
+    sorted_classes = sorted(class_sizes.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"\nTotal classes: {len(class_sizes)}")
+    print(f"Total images: {sum(class_sizes.values())}")
+    print(f"\nClass sizes:")
+    for label, size in sorted_classes:
+        print(f"  {label:15s}: {size:4d} images")
+    
+    sizes = list(class_sizes.values())
+    print(f"\nStatistics:")
+    print(f"  Min:  {min(sizes)}")
+    print(f"  Max:  {max(sizes)}")
+    print(f"  Mean: {int(np.mean(sizes)):.1f}")
+    print(f"  Median: {int(np.median(sizes))}")
+    print(f"  Imbalance ratio (max/min): {max(sizes) / min(sizes):.2f}x")
+
+
 # -----------------------------
 # Example usage
 # -----------------------------
@@ -339,6 +432,29 @@ def get_image_paths(root):
 if __name__ == "__main__":
     print(f"Classical feature extractor ready.")
     print(f"Feature dimensionality: {TOTAL_FEATURE_DIM}")
+    
     image_paths = get_image_paths('../dataset')
-    X_train, y_train, X_val, y_val = build_feature_matrix(image_paths)
-    print(f"Training samples: {len(X_train)}, Validation samples: {len(X_val)}")
+    class_to_paths = analyze_class_distribution(image_paths)
+    print_class_distribution(class_to_paths, "Original Dataset Distribution")
+    
+    # Use "mean" strategy with 1.2 multiplier for balanced but not excessive augmentation
+    # This will balance classes to approximately 1.2x the mean class size
+    X_train, y_train, X_val, y_val = build_feature_matrix(
+        image_paths,
+        balance_strategy="mean",
+        balance_multiplier=1.2,
+        max_augmentation_ratio=3.0
+    )
+    
+    print(f"\n{'='*60}")
+    print("Feature Extraction Complete")
+    print(f"{'='*60}")
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    
+    # Show final training distribution
+    from collections import Counter
+    train_dist = Counter(y_train)
+    print(f"\nFinal training distribution:")
+    for label, count in sorted(train_dist.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {label:15s}: {count:4d} samples")
