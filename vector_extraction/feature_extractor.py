@@ -229,19 +229,21 @@ def process_validation_set(class_to_val_paths: Dict[str, List[str]]) -> Tuple[np
     return np.array(X_val), np.array(y_val)
 
 
-def process_training_set(class_to_train_paths: Dict[str, List[str]]) -> Tuple[np.ndarray, np.ndarray]:
+def process_training_set(class_to_train_paths: Dict[str, List[str]], 
+                        balance_multiplier: float = 1.5) -> Tuple[np.ndarray, np.ndarray]:
     """
     Process training images (original + augmented).
-    Balances all classes to equal size (2x largest class in training set).
+    Balances all classes to equal size (balance_multiplier x largest class in training set).
     
     Args:
         class_to_train_paths: Dictionary mapping class labels to training image paths
+        balance_multiplier: Multiplier for balancing (default: 1.5, was 2.0)
         
     Returns:
         Tuple of (X_train, y_train) arrays
     """
     max_class_size = max(len(paths) for paths in class_to_train_paths.values())
-    target_size = max_class_size * 2
+    target_size = int(max_class_size * balance_multiplier)
     
     X_train = []
     y_train = []
@@ -269,7 +271,8 @@ def build_feature_matrix(image_paths: List[str],
                          train_output_path: str = "../features_train.npz",
                          val_output_path: str = "../features_val.npz",
                          test_size: float = 0.3,
-                         random_state: int = 42):
+                         random_state: int = 42,
+                         balance_multiplier: float = 1.5):
     """
     Build feature matrix with data augmentation and split into train/validation.
     Validation dataset is 30% of original data (pre-augmentation) and is not augmented.
@@ -281,6 +284,7 @@ def build_feature_matrix(image_paths: List[str],
         val_output_path: path to save validation .npz file
         test_size: proportion of original data for validation (default: 0.3)
         random_state: random seed for reproducibility (default: 42)
+        balance_multiplier: multiplier for class balancing (default: 1.5)
         
     Returns:
         tuple of (X_train, y_train, X_val, y_val) arrays
@@ -298,7 +302,7 @@ def build_feature_matrix(image_paths: List[str],
         class_to_val_paths[label] = val_paths
     
     X_val, y_val = process_validation_set(class_to_val_paths)
-    X_train, y_train = process_training_set(class_to_train_paths)
+    X_train, y_train = process_training_set(class_to_train_paths, balance_multiplier=balance_multiplier)
     
     np.savez(train_output_path, X=X_train, y=y_train)
     np.savez(val_output_path, X=X_val, y=y_val)
