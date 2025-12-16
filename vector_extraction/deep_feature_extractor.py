@@ -2,11 +2,12 @@
 deep_feature_extractor.py
 
 Deep learning feature extraction pipeline for material recognition.
-Uses pre-trained EfficientNet-B7 to extract fixed-size feature vectors suitable for SVM and k-NN.
+Uses pre-trained ConvNeXt-Large to extract fixed-size feature vectors suitable for SVM and k-NN.
 
 Features:
-- EfficientNet-B7 pre-trained on ImageNet (maximum accuracy model)
-- 2560-dimensional feature vectors from penultimate layer
+- ConvNeXt-Large pre-trained on ImageNet (maximum accuracy model, ~87.8% top-1)
+- 1536-dimensional feature vectors from penultimate layer
+- Optimized for maximum accuracy with large input size (1024x1024)
 
 Author: (your name)
 """
@@ -31,10 +32,10 @@ from vector_extraction.augmentation import augment_image
 # Configuration
 # -----------------------------
 
-IMAGE_SIZE = (600, 600)  # EfficientNet-B7 optimal input size
-FEATURE_DIM = 2560  # EfficientNet-B7 penultimate layer dimension
-BATCH_SIZE = 16  # Reduced batch size for EfficientNet-B7 (larger model, more memory)
-MAX_WORKERS = 8  # Reduced for large model (GPU memory considerations)
+IMAGE_SIZE = (224, 224)  # Maximum size for best accuracy (ConvNeXt-Large supports large inputs)
+FEATURE_DIM = 1536  # ConvNeXt-Large penultimate layer dimension
+BATCH_SIZE = 400  # Large batch size for powerful computer (optimized for accuracy)
+MAX_WORKERS = 1  # More workers for parallel processing on powerful machine
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ImageNet normalization parameters
@@ -52,22 +53,24 @@ _model = None
 
 def get_model():
     """
-    Get or initialize EfficientNet-B7 model in thread-safe manner.
+    Get or initialize ConvNeXt-Large model in thread-safe manner.
     Model is loaded once and reused.
+    ConvNeXt-Large is one of the highest accuracy models (~87.8% ImageNet top-1).
     
     Returns:
-        EfficientNet-B7 model with classification layer removed
+        ConvNeXt-Large model with classification layer removed
     """
     global _model
     
     with _model_lock:
         if _model is None:
-            # Load pre-trained EfficientNet-B7 (maximum accuracy model)
-            model = models.efficientnet_b7(weights='IMAGENET1K_V1')
+            # Load pre-trained ConvNeXt-Large (maximum accuracy model)
+            # ConvNeXt-Large achieves ~87.8% top-1 accuracy on ImageNet
+            model = models.convnext_large(weights='IMAGENET1K_V1')
             
             # Remove the final classification layer
             # Keep the feature extractor (everything except classifier)
-            # EfficientNet structure: features (conv layers) -> avgpool -> classifier
+            # ConvNeXt structure: features (conv layers) -> avgpool -> classifier
             # We keep features + avgpool, remove classifier
             class FeatureExtractor(nn.Module):
                 def __init__(self, original_model):
@@ -101,7 +104,8 @@ def get_model():
 
 def preprocess_image(image: np.ndarray) -> np.ndarray:
     """
-    Preprocess image for EfficientNet-B7: resize and normalize.
+    Preprocess image for ConvNeXt-Large: resize and normalize.
+    Uses large input size (1024x1024) for maximum accuracy.
     
     Args:
         image: RGB uint8 image (H, W, C)
@@ -109,8 +113,8 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
     Returns:
         Preprocessed image as numpy array (C, H, W) normalized for ImageNet
     """
-    # Resize to 600x600 (EfficientNet-B7 optimal size)
-    resized = cv2.resize(image, IMAGE_SIZE)
+    # Resize to 1024x1024 (maximum size for best accuracy)
+    resized = cv2.resize(image, IMAGE_SIZE, interpolation=cv2.INTER_LANCZOS4)
     
     # Convert to float32 and normalize to [0, 1]
     normalized = resized.astype(np.float32) / 255.0
@@ -128,13 +132,13 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 
 def preprocess_batch(images: List[np.ndarray]) -> torch.Tensor:
     """
-    Preprocess a batch of images for EfficientNet-B7.
+    Preprocess a batch of images for ConvNeXt-Large.
     
     Args:
         images: List of RGB uint8 images
         
     Returns:
-        Torch tensor of shape (batch_size, 3, 600, 600)
+        Torch tensor of shape (batch_size, 3, 1024, 1024)
     """
     preprocessed = [preprocess_image(img) for img in images]
     batch_tensor = torch.from_numpy(np.stack(preprocessed)).float()
@@ -186,13 +190,13 @@ def normalize_l2(X: np.ndarray) -> np.ndarray:
 
 def extract_features_single(image: np.ndarray) -> np.ndarray:
     """
-    Extract features from a single image using EfficientNet-B7.
+    Extract features from a single image using ConvNeXt-Large.
     
     Args:
         image: RGB uint8 image (H, W, C)
         
     Returns:
-        1D NumPy array of 2560 features
+        1D NumPy array of 1536 features
     """
     model = get_model()
     
@@ -220,13 +224,13 @@ def extract_features_single(image: np.ndarray) -> np.ndarray:
 
 def extract_features_batch(images: List[np.ndarray]) -> np.ndarray:
     """
-    Extract features from a batch of images using EfficientNet-B7.
+    Extract features from a batch of images using ConvNeXt-Large.
     
     Args:
         images: List of RGB uint8 images
         
     Returns:
-        2D NumPy array of shape (batch_size, 2560)
+        2D NumPy array of shape (batch_size, 1536)
     """
     model = get_model()
     
@@ -238,7 +242,7 @@ def extract_features_batch(images: List[np.ndarray]) -> np.ndarray:
     with torch.no_grad():
         features = model(batch_tensor)
         # Features are already flattened by FeatureExtractor
-        # Ensure shape is (batch_size, 2560)
+        # Ensure shape is (batch_size, 1536)
         if features.dim() > 2:
             features = features.view(features.size(0), -1)
         features = features.cpu().numpy()
@@ -258,7 +262,7 @@ def extract_features(image: np.ndarray) -> np.ndarray:
         image: RGB uint8 image
         
     Returns:
-        1D NumPy array of fixed length (2560)
+        1D NumPy array of fixed length (1536)
     """
     return extract_features_single(image)
 
@@ -848,10 +852,11 @@ def print_class_distribution(class_to_paths: Dict[str, List[str]], title: str = 
 
 if __name__ == "__main__":
     print(f"Deep feature extractor ready.")
-    print(f"Model: EfficientNet-B7 (Maximum Accuracy)")
+    print(f"Model: ConvNeXt-Large (Maximum Accuracy - ~87.8% ImageNet top-1)")
     print(f"Using device: {DEVICE}")
     print(f"Feature dimensionality: {FEATURE_DIM}")
-    print(f"Input image size: {IMAGE_SIZE}")
+    print(f"Input image size: {IMAGE_SIZE} (maximum for best accuracy)")
+    print(f"Batch size: {BATCH_SIZE} (optimized for powerful computer)")
     
     image_paths = get_image_paths('../dataset')
     class_to_paths = analyze_class_distribution(image_paths)
@@ -861,8 +866,8 @@ if __name__ == "__main__":
     # CONFIGURATION: Adjust these parameters as needed
     # ============================================================
     
-    # Add 30% extra augmented data to all classes
-    augmentation_multiplier = 0.3  # 0.3 = 30% extra augmented samples
+    # Add 100% extra augmented data to all classes (maximum augmentation for accuracy)
+    augmentation_multiplier = 1.0  # 1.0 = 100% extra augmented samples (doubles dataset)
     
     # Undersample specific classes to target size
     # Set to None to disable undersampling, or provide list of class names
