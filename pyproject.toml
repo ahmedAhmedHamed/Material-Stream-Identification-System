@@ -1,0 +1,44 @@
+[project]
+name = "ml-inference-gs"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "highdicom>=0.26.1",
+    "matplotlib>=3.5.0",
+    "nibabel>=5.3.2",
+    "opencv-python>=4.5.0,<4.12.0.88",
+    "pandas>=2.3.2",
+    "Pillow>=9.0.0",
+    "psycopg2-binary>=2.9.11",
+    "pyvista>=0.46.3",
+    "pyyaml>=6.0.2",
+    "safetensors>=0.3.0",
+    "scikit-image>=0.25.2",
+    "scikit-learn>=1.2.0",
+    "scipy>=1.16.1",
+    "seaborn>=0.13.2",
+    "shapely>=2.1.2",
+    "simpleitk>=2.5.2",
+    "streamlit>=1.28.0",
+    "tenacity>=9.1.2",
+    "torch>=2.8.0",
+    "torchvision>=0.22.0",
+    "tqdm>=4.67.1",
+    "types-tqdm>=4.67.0.20250809",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
