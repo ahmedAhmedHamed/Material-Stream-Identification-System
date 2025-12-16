@@ -88,13 +88,131 @@ def load_val_features(file_path: str = "../features_val.npz") -> Tuple[np.ndarra
 
 
 # -----------------------------
+# Class Weighting
+# -----------------------------
+
+def compute_class_weights(y_train: np.ndarray, class_weight: str = 'balanced') -> Dict[Any, float]:
+    """
+    Compute class weights based on class frequencies.
+    
+    Args:
+        y_train: Training labels
+        class_weight: Class weight mode (default: 'balanced')
+                      'balanced' automatically weights classes inversely
+                      proportional to their frequency
+        
+    Returns:
+        Dictionary mapping class labels to weights
+    """
+    if class_weight == 'balanced':
+        unique_classes, class_counts = np.unique(y_train, return_counts=True)
+        n_samples = len(y_train)
+        n_classes = len(unique_classes)
+        
+        # Compute weights: n_samples / (n_classes * class_count)
+        class_weights = n_samples / (n_classes * class_counts)
+        
+        return dict(zip(unique_classes, class_weights))
+    else:
+        # No weighting - return uniform weights
+        unique_classes = np.unique(y_train)
+        return {cls: 1.0 for cls in unique_classes}
+
+
+class WeightedKNeighborsClassifier(KNeighborsClassifier):
+    """
+    KNN classifier with class weighting support.
+    
+    Wraps KNeighborsClassifier and applies class weights during prediction
+    by modifying the voting mechanism to weight votes by class frequency.
+    """
+    
+    def __init__(self, n_neighbors: int = 5, class_weights: Optional[Dict[Any, float]] = None, **kwargs):
+        """
+        Initialize weighted KNN classifier.
+        
+        Args:
+            n_neighbors: Number of neighbors
+            class_weights: Dictionary mapping class labels to weights
+            **kwargs: Additional arguments passed to KNeighborsClassifier
+        """
+        super().__init__(n_neighbors=n_neighbors, **kwargs)
+        self.class_weights = class_weights
+        self._y_train = None
+    
+    def fit(self, X, y):
+        """
+        Fit the classifier and store training labels.
+        
+        Args:
+            X: Training feature matrix
+            y: Training labels
+        """
+        super().fit(X, y)
+        self._y_train = y
+        return self
+    
+    def predict(self, X):
+        """
+        Predict class labels with class-weighted voting.
+        
+        Args:
+            X: Feature matrix
+            
+        Returns:
+            Predicted class labels
+        """
+        if self.class_weights is None or self._y_train is None:
+            return super().predict(X)
+        
+        # Get distances and indices of nearest neighbors
+        distances, indices = self.kneighbors(X)
+        
+        # Get class labels of neighbors
+        neighbor_classes = self._y_train[indices]
+        
+        # Apply class weights to votes
+        predictions = []
+        for i in range(len(X)):
+            neighbor_votes = neighbor_classes[i]
+            neighbor_dists = distances[i]
+            
+            # Count weighted votes for each class
+            weighted_votes = {}
+            for j, cls in enumerate(neighbor_votes):
+                # Get base class weight
+                class_weight = self.class_weights.get(cls, 1.0)
+                
+                # Apply distance weighting if enabled
+                if self.weights == 'distance':
+                    # Use inverse distance as weight
+                    dist_weight = 1.0 / (neighbor_dists[j] + 1e-10)
+                    vote_weight = class_weight * dist_weight
+                else:
+                    # Uniform weighting
+                    vote_weight = class_weight
+                
+                weighted_votes[cls] = weighted_votes.get(cls, 0.0) + vote_weight
+            
+            # Predict class with highest weighted vote
+            if weighted_votes:
+                predictions.append(max(weighted_votes, key=weighted_votes.get))
+            else:
+                # Fallback to standard prediction
+                predictions.append(super().predict(X[i:i+1])[0])
+        
+        return np.array(predictions)
+
+
+# -----------------------------
 # Model Training
 # -----------------------------
 
 def train_knn_classifier(X_train: np.ndarray,
                         y_train: np.ndarray,
                         X_val: Optional[np.ndarray] = None,
-                        n_neighbors: int = 5) -> Tuple[KNeighborsClassifier, object]:
+                        n_neighbors: int = 5,
+                        class_weight: str = 'balanced') -> Tuple[KNeighborsClassifier, object]:
     """
     Train KNN classifier on scaled features.
     
@@ -103,13 +221,24 @@ def train_knn_classifier(X_train: np.ndarray,
         y_train: Training labels
         X_val: Optional validation feature matrix for scaling
         n_neighbors: Number of neighbors for KNN (default: 5)
+        class_weight: Class weight mode (default: 'balanced')
+                      'balanced' automatically weights classes inversely
+                      proportional to their frequency
         
     Returns:
         Tuple of (trained_classifier, scaler)
     """
     X_train_scaled, X_val_scaled, scaler = scale_features(X_train, X_val)
     
-    classifier = KNeighborsClassifier(n_neighbors=n_neighbors)
+    # Compute class weights if class_weight is enabled
+    class_weights = compute_class_weights(y_train, class_weight) if class_weight == 'balanced' else None
+    
+    # Use weighted classifier if class weights are provided
+    if class_weights is not None:
+        classifier = WeightedKNeighborsClassifier(n_neighbors=n_neighbors, class_weights=class_weights)
+    else:
+        classifier = KNeighborsClassifier(n_neighbors=n_neighbors)
+    
     classifier.fit(X_train_scaled, y_train)
     
     return classifier, scaler
@@ -122,7 +251,8 @@ def train_knn_classifier(X_train: np.ndarray,
 def get_evaluation_metrics(classifier: KNeighborsClassifier,
                           scaler: object,
                           X_val: np.ndarray,
-                          y_val: np.ndarray) -> Dict[str, Any]:
+                          y_val: np.ndarray,
+                          class_weight: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluate classifier and return metrics as dictionary.
     
@@ -131,6 +261,7 @@ def get_evaluation_metrics(classifier: KNeighborsClassifier,
         scaler: Fitted StandardScaler
         X_val: Validation feature matrix
         y_val: Validation labels
+        class_weight: Original class_weight parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
@@ -158,7 +289,7 @@ def get_evaluation_metrics(classifier: KNeighborsClassifier,
         y_val, y_pred, target_names=[str(c) for c in unique_classes], output_dict=True
     )
     
-    return {
+    metrics = {
         "overall_accuracy": overall_accuracy,
         "overall_accuracy_percent": overall_accuracy * 100,
         "per_class_accuracy": per_class_accuracy,
@@ -167,12 +298,18 @@ def get_evaluation_metrics(classifier: KNeighborsClassifier,
         "n_neighbors": classifier.n_neighbors,
         "validation_samples": int(len(y_val))
     }
+    
+    if class_weight is not None:
+        metrics["class_weight"] = class_weight
+    
+    return metrics
 
 
 def evaluate_classifier(classifier: KNeighborsClassifier,
                        scaler: object,
                        X_val: np.ndarray,
-                       y_val: np.ndarray) -> Dict[str, Any]:
+                       y_val: np.ndarray,
+                       class_weight: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluate classifier, print results, and return metrics.
     
@@ -181,11 +318,12 @@ def evaluate_classifier(classifier: KNeighborsClassifier,
         scaler: Fitted StandardScaler
         X_val: Validation feature matrix
         y_val: Validation labels
+        class_weight: Original class_weight parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
     """
-    metrics = get_evaluation_metrics(classifier, scaler, X_val, y_val)
+    metrics = get_evaluation_metrics(classifier, scaler, X_val, y_val, class_weight=class_weight)
     
     print(f"\n{'='*60}")
     print("CLASSIFIER EVALUATION RESULTS")
@@ -372,9 +510,13 @@ if __name__ == "__main__":
         print(f"Training KNN with n_neighbors = {n}")
         print(f"{'='*60}")
         
-        classifier, scaler = train_knn_classifier(X_train, y_train, X_val, n_neighbors=n)
+        classifier, scaler = train_knn_classifier(
+            X_train, y_train, X_val, n_neighbors=n, class_weight='balanced'
+        )
         
-        metrics = get_evaluation_metrics(classifier, scaler, X_val, y_val)
+        metrics = get_evaluation_metrics(
+            classifier, scaler, X_val, y_val, class_weight='balanced'
+        )
         accuracy = metrics['overall_accuracy']
         
         print(f"N = {n}: Accuracy = {accuracy:.4f} ({accuracy*100:.2f}%)")
