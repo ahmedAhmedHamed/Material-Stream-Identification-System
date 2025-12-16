@@ -192,7 +192,7 @@ def train_svm_classifier(X_train: np.ndarray,
     """
     X_train_scaled, X_val_scaled, scaler = scale_features(X_train, X_val)
     
-    classifier = SVC(C=C, kernel=kernel, gamma=gamma, class_weight=class_weight)
+    classifier = SVC(C=C, kernel=kernel, gamma=gamma, class_weight=class_weight, probability=True)
     classifier.fit(X_train_scaled, y_train)
     
     return classifier, scaler
