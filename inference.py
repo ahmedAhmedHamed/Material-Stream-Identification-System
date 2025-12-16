@@ -13,7 +13,7 @@ Features:
 Author: (your name)
 """
 from pathlib import Path
-from typing import Tuple, List, Optional, Union
+from typing import Tuple, List, Optional, Union, Dict
 import numpy as np
 import joblib
 from sklearn.neighbors import KNeighborsClassifier
@@ -241,14 +241,57 @@ def predict_batch(image_paths: List[str],
     return predictions.tolist()
 
 
+def predict_with_probabilities(image_path: str,
+                              classifier_path: str,
+                              scaler_path: Optional[str] = None) -> Tuple[str, Dict[str, float]]:
+    """
+    Predict class label with probabilities for all classes.
+    
+    Args:
+        image_path: Path to image file
+        classifier_path: Path to classifier .joblib file
+        scaler_path: Optional path to scaler .joblib file.
+                    If None, automatically searches in classifier directory.
+        
+    Returns:
+        Tuple of (predicted_class, probabilities_dict)
+        probabilities_dict maps class names to their probability scores
+        
+    Raises:
+        AttributeError: If classifier doesn't support predict_proba
+        RuntimeError: If predict_proba fails for any reason
+    """
+    classifier, scaler = load_model_and_scaler(classifier_path, scaler_path)
+    image = load_image(image_path)
+    features_scaled = extract_and_scale_features(image, scaler)
+    features_2d = features_scaled.reshape(1, -1)
+    
+    prediction = classifier.predict(features_2d)[0]
+    
+    # Get probabilities for all classes - fail if not available
+    if not hasattr(classifier, 'predict_proba'):
+        raise AttributeError(
+            f"Classifier {type(classifier).__name__} does not support predict_proba(). "
+            f"Cannot get probabilities."
+        )
+    
+    try:
+        probabilities = classifier.predict_proba(features_2d)[0]
+        classes = classifier.classes_
+        probabilities_dict = {str(cls): float(prob) for cls, prob in zip(classes, probabilities)}
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to get probabilities from classifier: {e}"
+        ) from e
+    
+    return prediction, probabilities_dict
+
+
 def predict_with_confidence(image_path: str,
                             classifier_path: str,
                             scaler_path: Optional[str] = None) -> Tuple[str, float]:
     """
-    Predict class label with confidence score for a single image.
-    
-    For KNN: Returns distance-weighted confidence.
-    For SVM: Returns probability if available, otherwise distance to decision boundary.
+    Predict class label with confidence score (maximum probability) for a single image.
     
     Args:
         image_path: Path to image file
@@ -259,25 +302,14 @@ def predict_with_confidence(image_path: str,
     Returns:
         Tuple of (predicted_class, confidence_score)
         Confidence is between 0 and 1 (higher is more confident)
+        
+    Raises:
+        AttributeError: If classifier doesn't support predict_proba
+        RuntimeError: If predict_proba fails for any reason
     """
-    classifier, scaler = load_model_and_scaler(classifier_path, scaler_path)
-    image = load_image(image_path)
-    features_scaled = extract_and_scale_features(image, scaler)
-    features_2d = features_scaled.reshape(1, -1)
-    
-    prediction = classifier.predict(features_2d)[0]
-    
-    # Try to get probability/confidence
-    if hasattr(classifier, 'predict_proba'):
-        try:
-            probabilities = classifier.predict_proba(features_2d)[0]
-            confidence = np.max(probabilities)
-        except:
-            confidence = 1.0
-    else:
-        confidence = 1.0
-    
-    return prediction, float(confidence)
+    prediction, probabilities = predict_with_probabilities(image_path, classifier_path, scaler_path)
+    confidence = max(probabilities.values())
+    return prediction, confidence
 
 
 # -----------------------------
@@ -328,9 +360,12 @@ def main():
             prediction = predict_image(image_path, classifier_path)
             print(f"Prediction: {prediction}")
             
-            # With confidence
-            pred, conf = predict_with_confidence(image_path, classifier_path)
-            print(f"Prediction: {pred} (confidence: {conf:.2%})")
+            # With probabilities
+            pred, probs = predict_with_probabilities(image_path, classifier_path)
+            print(f"\nPrediction: {pred}")
+            print("Probabilities:")
+            for class_name, prob in sorted(probs.items(), key=lambda x: x[1], reverse=True):
+                print(f"  {class_name}: {prob:.4f} ({prob*100:.2f}%)")
         except Exception as e:
             print(f"Error during prediction: {e}")
     else:
