@@ -97,7 +97,8 @@ def train_svm_classifier(X_train: np.ndarray,
                         X_val: Optional[np.ndarray] = None,
                         C: float = 1.0,
                         kernel: str = 'rbf',
-                        gamma: str = 'scale') -> Tuple[SVC, object]:
+                        gamma: str = 'scale',
+                        class_weight: str = 'balanced') -> Tuple[SVC, object]:
     """
     Train SVM classifier on scaled features.
     
@@ -108,13 +109,16 @@ def train_svm_classifier(X_train: np.ndarray,
         C: Regularization parameter (default: 1.0)
         kernel: Kernel type (default: 'rbf')
         gamma: Kernel coefficient (default: 'scale')
+        class_weight: Class weight mode (default: 'balanced')
+                      'balanced' automatically weights classes inversely
+                      proportional to their frequency
         
     Returns:
         Tuple of (trained_classifier, scaler)
     """
     X_train_scaled, X_val_scaled, scaler = scale_features(X_train, X_val)
     
-    classifier = SVC(C=C, kernel=kernel, gamma=gamma)
+    classifier = SVC(C=C, kernel=kernel, gamma=gamma, class_weight=class_weight)
     classifier.fit(X_train_scaled, y_train)
     
     return classifier, scaler
@@ -130,7 +134,8 @@ def get_evaluation_metrics(classifier: SVC,
                           y_val: np.ndarray,
                           C: Optional[float] = None,
                           kernel: Optional[str] = None,
-                          gamma: Optional[Any] = None) -> Dict[str, Any]:
+                          gamma: Optional[Any] = None,
+                          class_weight: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluate classifier and return metrics as dictionary.
     
@@ -142,6 +147,7 @@ def get_evaluation_metrics(classifier: SVC,
         C: Original C parameter used (optional)
         kernel: Original kernel parameter used (optional)
         gamma: Original gamma parameter used (optional)
+        class_weight: Original class_weight parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
@@ -173,7 +179,8 @@ def get_evaluation_metrics(classifier: SVC,
     model_params = {
         "C": float(C if C is not None else classifier.C),
         "kernel": str(kernel if kernel is not None else classifier.kernel),
-        "gamma": str(gamma if gamma is not None else classifier.gamma)
+        "gamma": str(gamma if gamma is not None else classifier.gamma),
+        "class_weight": str(class_weight if class_weight is not None else classifier.class_weight)
     }
     
     return {
@@ -193,7 +200,8 @@ def evaluate_classifier(classifier: SVC,
                        y_val: np.ndarray,
                        C: Optional[float] = None,
                        kernel: Optional[str] = None,
-                       gamma: Optional[Any] = None) -> Dict[str, Any]:
+                       gamma: Optional[Any] = None,
+                       class_weight: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluate classifier, print results, and return metrics.
     
@@ -205,12 +213,13 @@ def evaluate_classifier(classifier: SVC,
         C: Original C parameter used (optional)
         kernel: Original kernel parameter used (optional)
         gamma: Original gamma parameter used (optional)
+        class_weight: Original class_weight parameter used (optional)
         
     Returns:
         Dictionary containing all evaluation metrics
     """
     metrics = get_evaluation_metrics(
-        classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
+        classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma, class_weight=class_weight
     )
     
     print(f"\n{'='*60}")
@@ -392,12 +401,12 @@ if __name__ == "__main__":
         try:
             # Train classifier with current parameters
             classifier, scaler = train_svm_classifier(
-                X_train, y_train, X_val, C=C, kernel=kernel, gamma=gamma
+                X_train, y_train, X_val, C=C, kernel=kernel, gamma=gamma, class_weight='balanced'
             )
             
             # Evaluate classifier with original parameters
             metrics = get_evaluation_metrics(
-                classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma
+                classifier, scaler, X_val, y_val, C=C, kernel=kernel, gamma=gamma, class_weight='balanced'
             )
             accuracy = metrics['overall_accuracy']
             
@@ -413,7 +422,7 @@ if __name__ == "__main__":
                 best_classifier = classifier
                 best_scaler = scaler
                 best_metrics = metrics
-                best_params = {'C': C, 'kernel': kernel, 'gamma': gamma}
+                best_params = {'C': C, 'kernel': kernel, 'gamma': gamma, 'class_weight': 'balanced'}
                 print(f"    *** NEW BEST! ***")
         
         except Exception as e:
@@ -433,7 +442,8 @@ if __name__ == "__main__":
         print("Evaluating best classifier...")
         evaluate_classifier(
             best_classifier, best_scaler, X_val, y_val,
-            C=best_params['C'], kernel=best_params['kernel'], gamma=best_params['gamma']
+            C=best_params['C'], kernel=best_params['kernel'], gamma=best_params['gamma'],
+            class_weight=best_params['class_weight']
         )
         
         print("\nSaving best classifier, scaler, and evaluation metrics...")
