@@ -2,11 +2,11 @@
 deep_feature_extractor.py
 
 Deep learning feature extraction pipeline for material recognition.
-Uses pre-trained ResNet50 to extract fixed-size feature vectors suitable for SVM and k-NN.
+Uses pre-trained EfficientNet-B7 to extract fixed-size feature vectors suitable for SVM and k-NN.
 
 Features:
-- ResNet50 pre-trained on ImageNet
-- 2048-dimensional feature vectors from penultimate layer
+- EfficientNet-B7 pre-trained on ImageNet (maximum accuracy model)
+- 2560-dimensional feature vectors from penultimate layer
 
 Author: (your name)
 """
@@ -31,10 +31,10 @@ from vector_extraction.augmentation import augment_image
 # Configuration
 # -----------------------------
 
-IMAGE_SIZE = (224, 224)  # ResNet50 standard input size
-FEATURE_DIM = 2048  # ResNet50 penultimate layer dimension
-BATCH_SIZE = 32  # Batch size for efficient processing
-MAX_WORKERS = 10  # Reduced for deep model (GPU memory considerations)
+IMAGE_SIZE = (600, 600)  # EfficientNet-B7 optimal input size
+FEATURE_DIM = 2560  # EfficientNet-B7 penultimate layer dimension
+BATCH_SIZE = 16  # Reduced batch size for EfficientNet-B7 (larger model, more memory)
+MAX_WORKERS = 8  # Reduced for large model (GPU memory considerations)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ImageNet normalization parameters
@@ -52,23 +52,37 @@ _model = None
 
 def get_model():
     """
-    Get or initialize ResNet50 model in thread-safe manner.
+    Get or initialize EfficientNet-B7 model in thread-safe manner.
     Model is loaded once and reused.
     
     Returns:
-        ResNet50 model with classification layer removed
+        EfficientNet-B7 model with classification layer removed
     """
     global _model
     
     with _model_lock:
         if _model is None:
-            # Load pre-trained ResNet50
-            model = models.resnet50(weights='IMAGENET1K_V2')
+            # Load pre-trained EfficientNet-B7 (maximum accuracy model)
+            model = models.efficientnet_b7(weights='IMAGENET1K_V1')
             
-            # Remove the final classification layer (fc)
-            # Keep everything up to avgpool (which outputs 2048 features)
-            # ResNet50 structure: conv1, bn1, relu, maxpool, layer1-4, avgpool, fc
-            model = nn.Sequential(*list(model.children())[:-1])
+            # Remove the final classification layer
+            # Keep the feature extractor (everything except classifier)
+            # EfficientNet structure: features (conv layers) -> avgpool -> classifier
+            # We keep features + avgpool, remove classifier
+            class FeatureExtractor(nn.Module):
+                def __init__(self, original_model):
+                    super().__init__()
+                    self.features = original_model.features
+                    self.avgpool = original_model.avgpool
+                    
+                def forward(self, x):
+                    x = self.features(x)
+                    x = self.avgpool(x)
+                    # Flatten: (batch, channels, 1, 1) -> (batch, channels)
+                    x = x.view(x.size(0), -1)
+                    return x
+            
+            model = FeatureExtractor(model)
             
             # Set to evaluation mode
             model.eval()
@@ -87,7 +101,7 @@ def get_model():
 
 def preprocess_image(image: np.ndarray) -> np.ndarray:
     """
-    Preprocess image for ResNet50: resize and normalize.
+    Preprocess image for EfficientNet-B7: resize and normalize.
     
     Args:
         image: RGB uint8 image (H, W, C)
@@ -95,7 +109,7 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
     Returns:
         Preprocessed image as numpy array (C, H, W) normalized for ImageNet
     """
-    # Resize to 224x224
+    # Resize to 600x600 (EfficientNet-B7 optimal size)
     resized = cv2.resize(image, IMAGE_SIZE)
     
     # Convert to float32 and normalize to [0, 1]
@@ -114,13 +128,13 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 
 def preprocess_batch(images: List[np.ndarray]) -> torch.Tensor:
     """
-    Preprocess a batch of images for ResNet50.
+    Preprocess a batch of images for EfficientNet-B7.
     
     Args:
         images: List of RGB uint8 images
         
     Returns:
-        Torch tensor of shape (batch_size, 3, 224, 224)
+        Torch tensor of shape (batch_size, 3, 600, 600)
     """
     preprocessed = [preprocess_image(img) for img in images]
     batch_tensor = torch.from_numpy(np.stack(preprocessed)).float()
@@ -172,13 +186,13 @@ def normalize_l2(X: np.ndarray) -> np.ndarray:
 
 def extract_features_single(image: np.ndarray) -> np.ndarray:
     """
-    Extract features from a single image using ResNet50.
+    Extract features from a single image using EfficientNet-B7.
     
     Args:
         image: RGB uint8 image (H, W, C)
         
     Returns:
-        1D NumPy array of 2048 features
+        1D NumPy array of 2560 features
     """
     model = get_model()
     
@@ -192,8 +206,10 @@ def extract_features_single(image: np.ndarray) -> np.ndarray:
     # Extract features
     with torch.no_grad():
         features = model(tensor)
-        # Remove batch dimension and flatten
-        features = features.squeeze().cpu().numpy().flatten()
+        # Features are already flattened by FeatureExtractor
+        features = features.squeeze().cpu().numpy()
+        if features.ndim > 1:
+            features = features.flatten()
     
     features = features.astype(np.float32)
     # Apply L2 normalization
@@ -204,13 +220,13 @@ def extract_features_single(image: np.ndarray) -> np.ndarray:
 
 def extract_features_batch(images: List[np.ndarray]) -> np.ndarray:
     """
-    Extract features from a batch of images using ResNet50.
+    Extract features from a batch of images using EfficientNet-B7.
     
     Args:
         images: List of RGB uint8 images
         
     Returns:
-        2D NumPy array of shape (batch_size, 2048)
+        2D NumPy array of shape (batch_size, 2560)
     """
     model = get_model()
     
@@ -221,8 +237,10 @@ def extract_features_batch(images: List[np.ndarray]) -> np.ndarray:
     # Extract features
     with torch.no_grad():
         features = model(batch_tensor)
-        # Reshape to (batch_size, 2048)
-        features = features.view(features.size(0), -1)
+        # Features are already flattened by FeatureExtractor
+        # Ensure shape is (batch_size, 2560)
+        if features.dim() > 2:
+            features = features.view(features.size(0), -1)
         features = features.cpu().numpy()
     
     features = features.astype(np.float32)
@@ -240,7 +258,7 @@ def extract_features(image: np.ndarray) -> np.ndarray:
         image: RGB uint8 image
         
     Returns:
-        1D NumPy array of fixed length (2048)
+        1D NumPy array of fixed length (2560)
     """
     return extract_features_single(image)
 
@@ -830,8 +848,10 @@ def print_class_distribution(class_to_paths: Dict[str, List[str]], title: str = 
 
 if __name__ == "__main__":
     print(f"Deep feature extractor ready.")
+    print(f"Model: EfficientNet-B7 (Maximum Accuracy)")
     print(f"Using device: {DEVICE}")
     print(f"Feature dimensionality: {FEATURE_DIM}")
+    print(f"Input image size: {IMAGE_SIZE}")
     
     image_paths = get_image_paths('../dataset')
     class_to_paths = analyze_class_distribution(image_paths)
