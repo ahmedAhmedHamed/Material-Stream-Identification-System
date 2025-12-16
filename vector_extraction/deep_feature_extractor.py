@@ -621,6 +621,7 @@ def process_training_set(class_to_train_paths: Dict[str, List[str]],
                         resampling_strategy: str = 'none',
                         target_size: str = 'mean',
                         augmentation_multiplier: Optional[float] = None,
+                        undersample_classes: Optional[List[str]] = None,
                         random_state: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     Process training images with class-aware resampling and parallelization.
@@ -633,75 +634,56 @@ def process_training_set(class_to_train_paths: Dict[str, List[str]],
             - 'oversample_minority': Only oversample minority classes
             - 'undersample_majority': Only undersample majority classes
         target_size: Target size strategy ('mean', 'median', or int) for balancing
-        augmentation_multiplier: DEPRECATED - kept for backward compatibility.
-                                 Use resampling_strategy instead.
+        augmentation_multiplier: Multiplier for adding augmented data (e.g., 0.3 = 30% extra)
+        undersample_classes: List of class names to undersample to target size
         random_state: Random seed for reproducibility
         
     Returns:
         Tuple of (X_train, y_train) arrays
     """
-    # Handle deprecated augmentation_multiplier parameter
-    if augmentation_multiplier is not None and resampling_strategy == 'none':
-        # Legacy behavior: uniform augmentation
-        resampling_strategy = 'none'
-        X_train = []
-        y_train = []
-        
-        for label, paths in class_to_train_paths.items():
-            original_count = len(paths)
-            augmented_count = int(original_count * augmentation_multiplier)
-            
-            # Process original images in parallel
-            original_results = process_images_parallel(paths)
-            for features, label_val in original_results:
-                X_train.append(features)
-                y_train.append(label_val)
-            
-            # Process augmented images in parallel
-            if augmented_count > 0:
-                augmented_results = generate_augmented_samples_parallel(
-                    paths, augmented_count
-                )
-                for features, label_val in augmented_results:
-                    X_train.append(features)
-                    y_train.append(label_val)
-        
-        return np.array(X_train), np.array(y_train)
-    
-    # New class-aware resampling behavior
-    if resampling_strategy == 'none':
-        # No resampling: process all original images
-        balanced_paths = class_to_train_paths
-        target = None
-    else:
-        # Balance the training set
-        balanced_paths = balance_training_set(
-            class_to_train_paths, 
-            resampling_strategy, 
-            target_size,
-            random_state
-        )
+    # Handle class-specific undersampling
+    if undersample_classes is not None:
+        # Calculate target size for undersampling
         target = calculate_target_size(class_to_train_paths, target_size)
+        
+        # Undersample specified classes
+        processed_paths = {}
+        for label, paths in class_to_train_paths.items():
+            if label in undersample_classes:
+                # Undersample this class to target size
+                if len(paths) > target:
+                    processed_paths[label] = resample_class_paths(
+                        paths, target, random_state
+                    )
+                else:
+                    processed_paths[label] = paths
+            else:
+                # Keep all paths for other classes
+                processed_paths[label] = paths
+    else:
+        processed_paths = class_to_train_paths
     
     X_train = []
     y_train = []
     
-    for label, paths in balanced_paths.items():
+    for label, paths in processed_paths.items():
         original_count = len(paths)
         
-        # Process original images in parallel
+        # Process original images in parallel (using undersampled paths if applicable)
         original_results = process_images_parallel(paths)
         for features, label_val in original_results:
             X_train.append(features)
             y_train.append(label_val)
         
-        # Determine if oversampling is needed
-        if resampling_strategy in ('balance', 'oversample_minority') and target is not None:
-            if original_count < target:
-                # Generate augmented samples to reach target
-                needed_count = target - original_count
+        # Add augmented data if augmentation_multiplier is specified
+        # Use original paths (before undersampling) for more diverse augmentation
+        if augmentation_multiplier is not None and augmentation_multiplier > 0:
+            # Use original paths for augmentation to get more diversity
+            original_paths = class_to_train_paths[label]
+            augmented_count = int(original_count * augmentation_multiplier)
+            if augmented_count > 0:
                 augmented_results = generate_augmented_samples_parallel(
-                    paths, needed_count
+                    original_paths, augmented_count
                 )
                 for features, label_val in augmented_results:
                     X_train.append(features)
@@ -717,7 +699,8 @@ def build_feature_matrix(image_paths: List[str],
                          random_state: int = 42,
                          resampling_strategy: str = 'none',
                          target_size: str = 'mean',
-                         augmentation_multiplier: Optional[float] = None):
+                         augmentation_multiplier: Optional[float] = None,
+                         undersample_classes: Optional[List[str]] = None):
     """
     Build feature matrix with class-aware resampling and split into train/validation.
     All extracted features are L2-normalized for better KNN/SVM performance.
@@ -730,15 +713,16 @@ def build_feature_matrix(image_paths: List[str],
         val_output_path: path to save validation .npz file
         test_size: proportion of original data for validation (default: 0.3)
         random_state: random seed for reproducibility (default: 42)
-        resampling_strategy: Strategy for handling class imbalance:
+        resampling_strategy: Strategy for handling class imbalance (legacy parameter):
             - 'none': No resampling (original behavior)
-            - 'balance': Balance all classes to target size (oversample minority, undersample majority)
-            - 'oversample_minority': Only oversample minority classes to target size
-            - 'undersample_majority': Only undersample majority classes to target size
+            - 'balance': Balance all classes to target size
+            - 'oversample_minority': Only oversample minority classes
+            - 'undersample_majority': Only undersample majority classes
         target_size: Target size for balancing ('mean', 'median', or int value)
-        augmentation_multiplier: DEPRECATED - kept for backward compatibility.
-                                 Use resampling_strategy='none' with augmentation_multiplier
-                                 for legacy uniform augmentation behavior.
+        augmentation_multiplier: Multiplier for adding augmented data to all classes
+                                (e.g., 0.3 = add 30% extra augmented samples)
+        undersample_classes: List of class names to undersample to target size
+                            (e.g., ['paper'] to undersample only the 'paper' class)
         
     Returns:
         tuple of (X_train, y_train, X_val, y_val) arrays
@@ -762,6 +746,7 @@ def build_feature_matrix(image_paths: List[str],
         resampling_strategy=resampling_strategy,
         target_size=target_size,
         augmentation_multiplier=augmentation_multiplier,
+        undersample_classes=undersample_classes,
         random_state=random_state
     )
     
@@ -852,22 +837,35 @@ if __name__ == "__main__":
     class_to_paths = analyze_class_distribution(image_paths)
     print_class_distribution(class_to_paths, "Original Dataset Distribution")
     
-    # Class-aware resampling to handle imbalance
-    # Options: 'none', 'balance', 'oversample_minority', 'undersample_majority'
-    resampling_strategy = 'balance'  # Balance all classes to mean size
-    target_size = 'mean'  # Use mean class size as target
+    # ============================================================
+    # CONFIGURATION: Adjust these parameters as needed
+    # ============================================================
+    
+    # Add 30% extra augmented data to all classes
+    augmentation_multiplier = 0.3  # 0.3 = 30% extra augmented samples
+    
+    # Undersample specific classes to target size
+    # Set to None to disable undersampling, or provide list of class names
+    undersample_classes = ['paper']  # Undersample only 'paper' class
+    
+    # Target size for undersampling (used when undersample_classes is specified)
+    target_size = 'mean'  # Options: 'mean', 'median', or an integer value
+    
+    # ============================================================
     
     X_train, y_train, X_val, y_val = build_feature_matrix(
         image_paths,
-        resampling_strategy=resampling_strategy,
+        augmentation_multiplier=augmentation_multiplier,
+        undersample_classes=undersample_classes,
         target_size=target_size
     )
     
     print(f"\n{'='*60}")
     print("Feature Extraction Complete")
     print(f"{'='*60}")
-    print(f"Resampling strategy: {resampling_strategy}")
-    print(f"Target size: {target_size}")
+    print(f"Augmentation multiplier: {augmentation_multiplier} ({augmentation_multiplier*100:.0f}% extra)")
+    print(f"Undersample classes: {undersample_classes if undersample_classes else 'None'}")
+    print(f"Target size for undersampling: {target_size}")
     print(f"Training samples: {len(X_train)}")
     print(f"Validation samples: {len(X_val)}")
     print(f"Features are L2-normalized: Yes")
