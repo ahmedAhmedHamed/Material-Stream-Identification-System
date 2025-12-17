@@ -8,6 +8,8 @@ import joblib
 
 DATA_DIR = r"./dataset/trash"
 MODEL_DIR = r"./classifiers/SVM_22"
+UNKNOWN_LABEL = "unkown"
+MIN_CERTAINTY = 0.60
 
 
 def _ensure_repo_on_syspath(repo_root: Path) -> None:
@@ -62,8 +64,10 @@ def _predict_for_paths(image_paths: Iterable[Path], classifier, scaler) -> List[
             continue
         feats = _extract_features(images, expected_dim)
         feats_scaled = scaler.transform(feats)
-        batch_preds = classifier.predict(feats_scaled).tolist()
-        preds.extend([str(x) for x in batch_preds])
+        batch_preds = _labels_with_unknown_threshold(
+            classifier, feats_scaled, MIN_CERTAINTY, UNKNOWN_LABEL
+        )
+        preds.extend(batch_preds)
     return preds
 
 
@@ -90,6 +94,33 @@ def _extract_features(images, expected_dim: int):
     return feats
 
 
+def _labels_with_unknown_threshold(classifier, X_scaled, min_certainty: float, unknown_label: str) -> List[str]:
+    import numpy as np
+
+    if hasattr(classifier, "predict_proba"):
+        probs = classifier.predict_proba(X_scaled)
+        probs = np.asarray(probs)
+        best = probs.max(axis=1)
+        pred = classifier.predict(X_scaled).astype(str)
+        pred = np.where(best >= min_certainty, pred, unknown_label)
+        return pred.tolist()
+
+    if hasattr(classifier, "decision_function"):
+        scores = np.asarray(classifier.decision_function(X_scaled))
+        if scores.ndim == 1:
+            scores = np.vstack([-scores, scores]).T
+        scores = scores - scores.max(axis=1, keepdims=True)
+        exp_scores = np.exp(scores)
+        probs = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+        best = probs.max(axis=1)
+        pred = classifier.predict(X_scaled).astype(str)
+        pred = np.where(best >= min_certainty, pred, unknown_label)
+        return pred.tolist()
+
+    pred = classifier.predict(X_scaled).astype(str).tolist()
+    return [p for p in pred]
+
+
 def predict(dataFilePath: str, bestModelPath: str) -> List[str]:
     repo_root = Path(__file__).resolve().parent
     _ensure_repo_on_syspath(repo_root)
@@ -106,7 +137,8 @@ def predict(dataFilePath: str, bestModelPath: str) -> List[str]:
         return []
 
     classifier, scaler = _load_model_and_scaler(model_dir)
-    return _predict_for_paths(image_paths, classifier, scaler)
+    preds = _predict_for_paths(image_paths, classifier, scaler)
+    return preds
 
 
 def main() -> List[str]:
