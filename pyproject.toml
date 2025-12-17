@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "albumentations>=1.4.0",
     "highdicom>=0.26.1",
     "matplotlib>=3.5.0",
     "nibabel>=5.3.2",
