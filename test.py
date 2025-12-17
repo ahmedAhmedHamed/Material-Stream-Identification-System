@@ -7,9 +7,10 @@ import sys
 import joblib
 
 DATA_DIR = r"./dataset/trash"
-MODEL_DIR = r"./classifiers/SVM_22"
+MODEL_DIR = r"./classifiers/KNN_best"
 UNKNOWN_LABEL = "unkown"
 MIN_CERTAINTY = 0.60
+KNN_MAX_DISTANCE = 0.80
 
 
 def _ensure_repo_on_syspath(repo_root: Path) -> None:
@@ -25,17 +26,26 @@ def _iter_image_paths(root: Path) -> List[Path]:
 
 
 def _resolve_model_paths(model_dir: Path) -> Tuple[Path, Path]:
-    clf = model_dir / "svm_classifier.joblib"
-    scl = model_dir / "svm_scaler.joblib"
-    if not clf.exists():
-        raise FileNotFoundError(f"Missing classifier file: {clf}")
-    if not scl.exists():
-        raise FileNotFoundError(f"Missing scaler file: {scl}")
-    return clf, scl
+    svm_clf = model_dir / "svm_classifier.joblib"
+    svm_scl = model_dir / "svm_scaler.joblib"
+    knn_clf = model_dir / "knn_classifier.joblib"
+    knn_scl = model_dir / "knn_scaler.joblib"
+
+    if knn_clf.exists() and knn_scl.exists():
+        return knn_clf, knn_scl
+    if svm_clf.exists() and svm_scl.exists():
+        return svm_clf, svm_scl
+
+    raise FileNotFoundError(
+        "Could not find a supported model in bestModelPath. Expected either:\n"
+        f"- {knn_clf.name} + {knn_scl.name}\n"
+        f"- {svm_clf.name} + {svm_scl.name}"
+    )
 
 
 def _load_model_and_scaler(model_dir: Path):
     classifier_path, scaler_path = _resolve_model_paths(model_dir)
+    _register_custom_classes_for_unpickling()
     return joblib.load(classifier_path), joblib.load(scaler_path)
 
 
@@ -72,13 +82,6 @@ def _predict_for_paths(image_paths: Iterable[Path], classifier, scaler) -> List[
 
 
 def _extract_features(images, expected_dim: int):
-    if expected_dim == 1536:
-        from vector_extraction.deep_feature_extractor import (  # pylint: disable=import-error
-            extract_features_batch,
-        )
-
-        return extract_features_batch(images)
-
     from vector_extraction.feature_extractor_v2_core import (  # pylint: disable=import-error
         extract_features,
     )
@@ -94,8 +97,31 @@ def _extract_features(images, expected_dim: int):
     return feats
 
 
+def _register_custom_classes_for_unpickling() -> None:
+    """
+    Some saved KNN models may reference WeightedKNeighborsClassifier from __main__.
+    Ensure it is available to joblib.load() in both module namespaces.
+    """
+    try:
+        from classifiers.KNN import WeightedKNeighborsClassifier  # pylint: disable=import-error
+    except Exception:  # noqa: BLE001
+        return
+
+    sys.modules.setdefault("__main__", sys.modules.get("__main__") or sys.modules[__name__])
+    main_mod = sys.modules["__main__"]
+    if not hasattr(main_mod, "WeightedKNeighborsClassifier"):
+        setattr(main_mod, "WeightedKNeighborsClassifier", WeightedKNeighborsClassifier)
+
+
 def _labels_with_unknown_threshold(classifier, X_scaled, min_certainty: float, unknown_label: str) -> List[str]:
     import numpy as np
+
+    if getattr(classifier, "n_neighbors", None) == 1 and hasattr(classifier, "kneighbors"):
+        distances, _ = classifier.kneighbors(X_scaled, n_neighbors=1, return_distance=True)
+        distances = np.asarray(distances).reshape(-1)
+        pred = classifier.predict(X_scaled).astype(str)
+        pred = np.where(distances <= float(KNN_MAX_DISTANCE), pred, unknown_label)
+        return pred.tolist()
 
     if hasattr(classifier, "predict_proba"):
         probs = classifier.predict_proba(X_scaled)
