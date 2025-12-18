@@ -1,6 +1,11 @@
 """
-احمد احمد حامد احمد
-20211003
+KNN Classifier for Material Recognition
+
+K-nearest neighbors classifier using sklearn that loads features from
+features_train.npz and features_val.npz, scales features, fits the model,
+and saves it for future use.
+
+Author: (your name)
 """
 import os
 import json
@@ -20,6 +25,18 @@ from vector_extraction.feature_extractor import scale_features
 # -----------------------------
 
 def _resolve_file_path(file_path: str) -> Path:
+    """
+    Resolve file path, checking both absolute and relative locations.
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        Resolved Path object
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist
+    """
     path = Path(file_path)
     
     if path.exists():
@@ -33,6 +50,15 @@ def _resolve_file_path(file_path: str) -> Path:
 
 
 def load_train_features(file_path: str = "../features_train.npz") -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load training features from npz file.
+    
+    Args:
+        file_path: Path to features_train.npz file
+        
+    Returns:
+        Tuple of (X_train, y_train) arrays
+    """
     path = _resolve_file_path(file_path)
     data = np.load(path)
     
@@ -43,6 +69,15 @@ def load_train_features(file_path: str = "../features_train.npz") -> Tuple[np.nd
 
 
 def load_val_features(file_path: str = "../features_val.npz") -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load validation features from npz file.
+    
+    Args:
+        file_path: Path to features_val.npz file
+        
+    Returns:
+        Tuple of (X_val, y_val) arrays
+    """
     path = _resolve_file_path(file_path)
     data = np.load(path)
     
@@ -57,6 +92,18 @@ def load_val_features(file_path: str = "../features_val.npz") -> Tuple[np.ndarra
 # -----------------------------
 
 def compute_class_weights(y_train: np.ndarray, class_weight: str = 'balanced') -> Dict[Any, float]:
+    """
+    Compute class weights based on class frequencies.
+    
+    Args:
+        y_train: Training labels
+        class_weight: Class weight mode (default: 'balanced')
+                      'balanced' automatically weights classes inversely
+                      proportional to their frequency
+        
+    Returns:
+        Dictionary mapping class labels to weights
+    """
     if class_weight == 'balanced':
         unique_classes, class_counts = np.unique(y_train, return_counts=True)
         n_samples = len(y_train)
@@ -75,11 +122,11 @@ def compute_class_weights(y_train: np.ndarray, class_weight: str = 'balanced') -
 class WeightedKNeighborsClassifier(KNeighborsClassifier):
     """
     KNN classifier with class weighting support.
-
+    
     Wraps KNeighborsClassifier and applies class weights during prediction
     by modifying the voting mechanism to weight votes by class frequency.
     """
-
+    
     def __init__(self, n_neighbors: int = 5, class_weights: Optional[Dict[Any, float]] = None, **kwargs):
         """
         Initialize weighted KNN classifier.
@@ -118,10 +165,13 @@ class WeightedKNeighborsClassifier(KNeighborsClassifier):
         if self.class_weights is None or self._y_train is None:
             return super().predict(X)
         
+        # Get distances and indices of nearest neighbors
         distances, indices = self.kneighbors(X)
         
+        # Get class labels of neighbors
         neighbor_classes = self._y_train[indices]
         
+        # Apply class weights to votes
         predictions = []
         for i in range(len(X)):
             neighbor_votes = neighbor_classes[i]

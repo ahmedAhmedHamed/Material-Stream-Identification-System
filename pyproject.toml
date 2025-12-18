@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "albumentations>=1.4.0",
+    "fastapi>=0.104.0",
     "highdicom>=0.26.1",
     "matplotlib>=3.5.0",
     "nibabel>=5.3.2",
@@ -15,6 +16,8 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "pyvista>=0.46.3",
     "pyyaml>=6.0.2",
+    "python-multipart>=0.0.6",
+    "pydantic>=2.5.0",
     "safetensors>=0.3.0",
     "scikit-image>=0.25.2",
     "scikit-learn>=1.2.0",
@@ -28,6 +31,7 @@ dependencies = [
     "torchvision>=0.22.0",
     "tqdm>=4.67.1",
     "types-tqdm>=4.67.0.20250809",
+    "uvicorn[standard]>=0.24.0",
 ]
 
 [tool.uv.sources]

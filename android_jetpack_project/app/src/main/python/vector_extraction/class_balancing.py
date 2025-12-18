@@ -61,4 +61,3 @@ def _sample_without_replacement(paths: List[str], k: int, rng: Random) -> List[s
     return rng.sample(list(paths), k)
 
 
-
