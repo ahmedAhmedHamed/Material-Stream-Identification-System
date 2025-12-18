@@ -1,6 +1,24 @@
 احمد احمد حامد احمد #
 # 20211003
 
+# foreword
+I've decided to leave in all the parts of the code that are left unused for the sake of showing effort.
+the parts that the user is expected to interact with are:
+- for mobile server
+- - api_server.py
+- - android_jetpack_project
+
+- for feature extraction
+- - standalone_scripts.run_feature_extractor_v2_dataset.py
+
+- for data cleanup
+- - standalone_scripts.clean_corrupted_data.py
+
+- for testing:
+- - test.py
+
+all other files are either internal files or are completely unused.
+
 # components
 
 - standalone scripts
