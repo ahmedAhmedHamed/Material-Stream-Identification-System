@@ -12,6 +12,9 @@ For the settling of class counts I originally made it so that the classes are 'w
 if the model got 'trash' wrong it would be punished more than if it got 'paper' wrong.
 then changed it so that the classes are all the same number to be closer to the requirements.
 
+KNN is better than SVM in the deep learned features.
+SVM is better than KNN in the manual features.
+
 the deep learning feature extraction is by far the best feature extraction as it resulted in >90% accuracy in both models with 30% validation dataset size.
 
 the 'uncertain' class is not its own class and is instead calculated by checking if the certainty is less than 60%

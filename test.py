@@ -7,7 +7,7 @@ import sys
 import joblib
 
 DATA_DIR = r"./dataset/trash"
-MODEL_DIR = r"./classifiers/KNN_best"
+MODEL_DIR = r"./classifiers/SVM_best"  # change to SVM_best to run SVM
 UNKNOWN_LABEL = "unknown"
 MIN_CERTAINTY = 0.60
 KNN_MAX_DISTANCE = 0.80
