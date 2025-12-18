@@ -52,10 +52,6 @@ def load_val_features(file_path: str = "../features_val.npz") -> Tuple[np.ndarra
     return data['X'], data['y']
 
 
-# -----------------------------
-# Class Weighting
-# -----------------------------
-
 def compute_class_weights(y_train: np.ndarray, class_weight: str = 'balanced') -> Dict[Any, float]:
     if class_weight == 'balanced':
         unique_classes, class_counts = np.unique(y_train, return_counts=True)
@@ -154,10 +150,6 @@ class WeightedKNeighborsClassifier(KNeighborsClassifier):
         return np.array(predictions)
 
 
-# -----------------------------
-# Model Training
-# -----------------------------
-
 def train_knn_classifier(X_train: np.ndarray,
                         y_train: np.ndarray,
                         X_val: Optional[np.ndarray] = None,
@@ -193,10 +185,6 @@ def train_knn_classifier(X_train: np.ndarray,
     
     return classifier, scaler
 
-
-# -----------------------------
-# Model Evaluation
-# -----------------------------
 
 def get_evaluation_metrics(classifier: KNeighborsClassifier,
                           scaler: object,
@@ -429,10 +417,6 @@ def save_best_model(classifier: KNeighborsClassifier,
     print(f"Best N value: {metrics.get('n_neighbors', 'N/A')}")
     print(f"Best accuracy: {metrics['overall_accuracy']:.4f} ({metrics['overall_accuracy_percent']:.2f}%)")
 
-
-# -----------------------------
-# Main Execution
-# -----------------------------
 
 if __name__ == "__main__":
     print("Loading training features...")

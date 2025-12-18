@@ -8,6 +8,11 @@
 ## Foreword
 
 I've decided to leave in all the parts of the code that are left unused for the sake of showing effort.
+For the settling of class counts I originally made it so that the classes are 'weighted' meaning that
+if the model got 'trash' wrong it would be punished more than if it got 'paper' wrong.
+then changed it so that the classes are all the same number to be closer to the requirements.
+
+the 'uncertain' class is not its own class and is instead calculated by checking if the certainty is less than 60%
 
 The parts that the user is expected to interact with are:
 

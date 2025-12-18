@@ -1,13 +1,3 @@
-"""
-SVM Classifier for Material Recognition
-
-Support Vector Machine classifier using sklearn that loads features from
-features_train.npz and features_val.npz, scales features, fits the model,
-and saves it for future use.
-
-Author: (your name)
-"""
-import os
 import json
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
@@ -508,10 +498,6 @@ def save_classifier(classifier: SVC,
     print(f"Evaluation metrics saved to {metrics_path}")
     print(f"All files saved in directory: {output_dir}")
 
-
-# -----------------------------
-# Main Execution
-# -----------------------------
 
 if __name__ == "__main__":
     print("Loading training features...")
