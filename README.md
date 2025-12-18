@@ -19,6 +19,32 @@ the parts that the user is expected to interact with are:
 
 all other files are either internal files or are completely unused.
 
+# performance reports:
+
+in manual vector extraction: 
+adding large features is a bad idea; adding HOB to the features always tanked the accuracy by a large margin.
+adding many small features did not change the accuracy by a huge margin.
+any of the currently used features is enough for the model to have 60% accuracy
+all of them together give around 85% accuracy.
+
+if I were to spend more time on this I would likely add more vectors to the extraction.
+
+in data augmentation:
+
+I tried to make it so that I increase all the classes to be 2X the biggest class but that did not produce adequate results.
+Then tried to make it so that I undersample only paper and oversample the rest, that produced better results.
+currently it is made so that the target is the median of the dataset and the data augmentation increases the size and all of them are over or under sampled to reach that goal.
+
+some data augmentations reduced accuracy while some did not have much of an effect.
+removed the ones that reduced accuracy, kept the rest.
+
+adding a lot of data did not increase the model accuracy much, but did increase the time it took to infer and train, so I left it on 1.0x at the end.
+
+
+in SVM and KNN, instead of manually experimented I made it so that the script programmatically tries most of the sensible combinations.
+in KNN it always ends up being that N = 1 is the correct one
+in SVM it always ends up that the correct parameters is found in iterations 20 through 25
+
 # components
 
 - standalone scripts
