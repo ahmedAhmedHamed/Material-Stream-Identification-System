@@ -8,7 +8,7 @@ import joblib
 
 DATA_DIR = r"./dataset/trash"
 MODEL_DIR = r"./classifiers/KNN_best"
-UNKNOWN_LABEL = "unkown"
+UNKNOWN_LABEL = "unknown"
 MIN_CERTAINTY = 0.60
 KNN_MAX_DISTANCE = 0.80
 
@@ -175,8 +175,31 @@ def main() -> List[str]:
     return preds
 
 
+def labels_to_int(preds: List[str]) -> List[int]:
+    """Map string labels to integer values.
+    
+    glass = 0
+    paper = 1
+    cardboard = 2
+    plastic = 3
+    metal = 4
+    trash = 5
+    unknown = 6
+    """
+    label_map = {
+        "glass": 0,
+        "paper": 1,
+        "cardboard": 2,
+        "plastic": 3,
+        "metal": 4,
+        "trash": 5,
+        "unknown": 6,
+    }
+    return [label_map.get(label.lower(), 6) for label in preds]
+
+
 if __name__ == "__main__":
     preds = main()
-    print(preds)
+    print(labels_to_int(preds))
 
 
